@@ -50,10 +50,12 @@ class Ledger:
         state: dict[str, dict] = {}
         for e in self._entries():
             at = datetime.fromisoformat(e["at"])
-            if start is not None and at < start and e["op"] == "reserve":
-                continue
-            if self.budget.period_days is None and run_id is not None and e.get("run_id") != run_id:
-                continue
+            if e["op"] == "reserve":
+                if start is not None and at < start:
+                    continue
+                # A per-run budget counts only this run's reservations; settlements follow them by id.
+                if self.budget.period_days is None and run_id is not None and e.get("run_id") != run_id:
+                    continue
             if e["op"] == "reserve":
                 state[e["id"]] = {"amount": e["usd"], "open": True}
             elif e["id"] in state:

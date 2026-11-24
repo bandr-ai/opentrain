@@ -1,7 +1,18 @@
 """The ``opentrain`` command (alias ``ot``).
 
-v0.1 bench is what runs today: ``session import`` and ``bench``. Everything reads local session
-logs and writes only under ``.opentrain/``; nothing leaves the machine.
+    opentrain                      first run, or what is live and how it is doing
+    opentrain init                 write a Trainfile
+    opentrain bench                v0.1: task yield, where time goes, held-out split
+    opentrain mine / lint          sessions into verified tasks; re-check the verifiers
+    opentrain train                the goal, end to end, through the gate
+    opentrain run "..."            one instruction to the engine (your claude -p, with train tools)
+    opentrain watch / fix          the unattended loop; file a bug against the model
+    opentrain eval / race / diff   score a model; frontier vs specialist; what flipped
+    opentrain serve / connect      use the model from pi, opencode or Claude Code
+    opentrain web                  the dashboard
+
+Everything reads local session logs and writes under ``.opentrain/``. Nothing leaves the machine
+until a run's upload is approved.
 """
 
 from __future__ import annotations
@@ -25,7 +36,7 @@ def _parse_date(value: str) -> datetime:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
-def _load(args) -> list[Session]:
+def load_sessions(args) -> list[Session]:
     sessions, unreadable = claude_code.load_all(Path(args.sessions).expanduser())
     if args.since:
         sessions = [s for s in sessions if s.started_at >= _parse_date(args.since)]
@@ -36,6 +47,9 @@ def _load(args) -> list[Session]:
     return sessions
 
 
+_load = load_sessions  # kept for older callers
+
+
 def _table(rows: list[list[str]], header: list[str]) -> str:
     widths = [max(len(str(r[i])) for r in [header, *rows]) for i in range(len(header))]
     line = lambda r: "  ".join(str(c).ljust(w) for c, w in zip(r, widths))  # noqa: E731
@@ -44,7 +58,7 @@ def _table(rows: list[list[str]], header: list[str]) -> str:
 
 def cmd_import(args) -> int:
     d = ensure(args.state)
-    sessions = _load(args)
+    sessions = load_sessions(args)
     out = d / "sessions" / "index.jsonl"
     with out.open("w") as fh:
         for s in sorted(sessions, key=lambda s: s.started_at):
@@ -105,8 +119,12 @@ def _print_time(b: dict) -> None:
 
 
 def cmd_bench(args) -> int:
+    if args.what == "models":
+        from .commands.run import cmd_bench_models
+
+        return cmd_bench_models(args)
     d = ensure(args.state)
-    sessions = _load(args)
+    sessions = load_sessions(args)
     if not sessions:
         print("No sessions found. Point --sessions at a Claude Code projects folder.", file=sys.stderr)
         return 1
@@ -151,7 +169,8 @@ def cmd_bench(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="opentrain", description="The open harness for training models.")
     p.add_argument("--version", action="version", version=f"opentrain {__version__}")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    _common_state(p)
+    sub = p.add_subparsers(dest="cmd")
 
     def common(sp):
         sp.add_argument("--sessions", default=str(claude_code.DEFAULT_ROOT),
@@ -170,19 +189,43 @@ def build_parser() -> argparse.ArgumentParser:
     imp.set_defaults(fn=cmd_import)
 
     bench = sub.add_parser("bench", help="v0.1 bench: task yield, time breakdown, held-out split")
-    bench.add_argument("what", nargs="?", default="all", choices=["all", "yield", "time", "split"])
+    bench.add_argument("what", nargs="?", default="all", choices=["all", "yield", "time", "split", "models"])
+    bench.add_argument("--headless", action="append", default=[], metavar="SPEC",
+                       help="bench models: claude, claude:<model>, codex (repeatable)")
+    bench.add_argument("--direct", nargs=2, action="append", default=[], metavar=("BASE_URL", "MODEL"),
+                       help="bench models: an OpenAI-compatible endpoint (repeatable)")
+    bench.add_argument("--api-key-env", default=None)
+    bench.add_argument("--max-steps", type=int, default=60)
+    bench.add_argument("--timeout", type=float, default=900)
     bench.add_argument("--heldout", type=float, default=0.3, help="share of candidates held out (default 0.3)")
     bench.add_argument("--cutoff", help="hold out every candidate that started on or after this date")
     bench.add_argument("--include-repairable", action="store_true",
                        help="put repairable sessions in the split too")
     common(bench)
     bench.set_defaults(fn=cmd_bench)
+
+    from .commands import data, loop, run, train, web
+
+    for mod in (loop, data, run, train, web):
+        mod.register(sub)
     return p
+
+
+def _common_state(p) -> None:
+    p.add_argument("--state", dest="state", default=None, help=argparse.SUPPRESS)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.fn(args)
+    if not getattr(args, "fn", None):
+        from .commands.loop import cmd_home
+
+        return cmd_home(args)
+    try:
+        return args.fn(args)
+    except KeyboardInterrupt:
+        print("\nInterrupted", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

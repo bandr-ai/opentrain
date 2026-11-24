@@ -17,6 +17,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -27,6 +28,16 @@ from .tasks import Task
 
 class WorkspaceError(RuntimeError):
     pass
+
+
+ENV_DIRS = (".venv", "venv", "node_modules", ".tox", "vendor/bundle")
+"""Untracked dependency folders a task's tests need but a fresh worktree lacks. They are linked
+from the main clone, read-only in spirit: an attempt that changes dependencies changes them for
+the user too, so the agent's prompt says not to install packages."""
+
+_git_lock = threading.Lock()
+"""``git worktree add/remove/prune`` on one repo from several threads at once races on the
+repo's shared metadata. Worktrees are independent once they exist, so only those calls lock."""
 
 
 @dataclass(frozen=True)
@@ -53,14 +64,32 @@ def checkout(task: Task, keep: bool = False) -> Iterator[Path]:
         raise WorkspaceError(f"repo {task.repo} is not on this machine")
     tmp = Path(tempfile.mkdtemp(prefix=f"ot-{task.task_id[:12]}-"))
     ws = tmp / "repo"
-    _git(task.repo, "worktree", "add", "--detach", "-q", str(ws), task.base_commit)
+    with _git_lock:
+        _git(task.repo, "worktree", "add", "--detach", "-q", str(ws), task.base_commit)
     try:
+        link_env(Path(task.repo), ws)
         yield ws
     finally:
         if not keep:
-            _git(task.repo, "worktree", "remove", "--force", str(ws), check=False)
-            shutil.rmtree(tmp, ignore_errors=True)
-            _git(task.repo, "worktree", "prune", check=False)
+            with _git_lock:
+                _git(task.repo, "worktree", "remove", "--force", str(ws), check=False)
+                shutil.rmtree(tmp, ignore_errors=True)
+                _git(task.repo, "worktree", "prune", check=False)
+
+
+def link_env(repo: Path, ws: Path) -> list[str]:
+    """Link the main clone's dependency folders into the worktree, where git does not track them."""
+    linked = []
+    for rel in ENV_DIRS:
+        src, dest = repo / rel, ws / rel
+        if src.is_dir() and not dest.exists():
+            tracked = subprocess.run(["git", "-C", str(repo), "ls-files", "--error-unmatch", rel],
+                                     capture_output=True).returncode == 0
+            if not tracked:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.symlink_to(src, target_is_directory=True)
+                linked.append(rel)
+    return linked
 
 
 def diff(workspace: Path, exclude: tuple[str, ...] = ()) -> str:
@@ -105,6 +134,10 @@ def run_tests(task: Task, workspace: Path, timeout: float = 900) -> Verdict:
     overlay_tests(task, workspace)
     start = time.monotonic()
     env = {**os.environ, "CI": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+    # A linked .venv may hold an editable install pointing at the main clone. Putting the
+    # worktree's own source first makes the tests import the code under test, not the user's copy.
+    own = [str(p) for p in (workspace / "src", workspace) if p.is_dir()]
+    env["PYTHONPATH"] = os.pathsep.join(own + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
     proc = subprocess.Popen(task.test_command, shell=True, cwd=workspace, env=env, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     try:

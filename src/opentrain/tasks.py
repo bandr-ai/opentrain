@@ -36,8 +36,9 @@ class Controls:
 
     reference: bool
     """The reference answer passes."""
-    noop: bool
-    """Doing nothing passes. Must be False."""
+    noop: bool | None
+    """Doing nothing passes. Must be False. None: not run, or inconclusive (the environment broke,
+    so the failure proves nothing about the verifier)."""
     wrong: bool | None = None
     """A known-wrong answer passes. Must be False when checked; None when there was none to try."""
     seconds: float | None = None
@@ -45,11 +46,13 @@ class Controls:
 
     @property
     def valid(self) -> bool:
-        return self.reference and not self.noop and self.wrong is not True
+        return self.reference and self.noop is False and self.wrong is not True
 
     def reason(self) -> str:
         if not self.reference:
             return "the reference answer fails its own verifier"
+        if self.noop is None:
+            return "doing nothing was inconclusive: " + (self.detail or "not run")
         if self.noop:
             return "doing nothing passes the verifier"
         if self.wrong:
@@ -73,9 +76,11 @@ class Task:
     created_at: str | None = None
     """When the work happened: the split by date uses this, not when the task was mined."""
     meta: dict[str, Any] = field(default_factory=dict)
+    timeout: float = 900.0
+    """Seconds the verifier (and an attempt) may take, from task.toml."""
 
     def digest(self) -> str:
-        body = json.dumps({k: v for k, v in asdict(self).items() if k != "meta"}, sort_keys=True)
+        body = json.dumps({k: v for k, v in asdict(self).items() if k not in ("meta", "timeout")}, sort_keys=True)
         return hashlib.sha256(body.encode()).hexdigest()[:16]
 
 
@@ -83,7 +88,8 @@ def _toml_str(v: str) -> str:
     return json.dumps(v)  # a JSON string is a valid TOML basic string
 
 
-def task_toml(t: Task, timeout: int = 900) -> str:
+def task_toml(t: Task, timeout: float | None = None) -> str:
+    timeout = t.timeout if timeout is None else timeout
     lines = [
         'version = "1.0"',
         "",
@@ -114,7 +120,8 @@ def task_toml(t: Task, timeout: int = 900) -> str:
 
 
 def read_task(folder: Path) -> Task:
-    data = tomllib.loads((folder / "task.toml").read_text())["opentrain"]
+    doc = tomllib.loads((folder / "task.toml").read_text())
+    data = doc["opentrain"]
     meta_path = folder / "meta.json"
     return Task(
         task_id=data["task_id"],
@@ -124,7 +131,8 @@ def read_task(folder: Path) -> Task:
         reference_commit=data["reference_commit"],
         test_command=data["test_command"],
         test_files=tuple(data.get("test_files", [])),
-        kind=tomllib.loads((folder / "task.toml").read_text())["metadata"].get("category", "coding"),
+        kind=doc.get("metadata", {}).get("category", "coding"),
+        timeout=float(doc.get("verifier", {}).get("timeout_sec", 900.0)),
         family=data.get("family") or None,
         source_session=data.get("source_session") or None,
         created_at=data.get("created_at") or None,
@@ -168,6 +176,8 @@ class Store:
         if not controls.valid:
             raise TaskRejected(controls.reason())
         task = read_task(folder)
+        if self.subdir == "tasks" and task.task_id in HeldoutStore(self.root.parent):
+            raise TaskRejected(f"{task.task_id} is held out; it can never become a training task")
         dest = self.folder(task.task_id)
         if dest.exists():
             shutil.rmtree(dest)

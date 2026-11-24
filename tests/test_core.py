@@ -191,3 +191,22 @@ def test_verify_reference_passes_and_noop_fails(tmp_path, repo):
     assert not workspace.verify(t, "").passed
     assert not workspace.verify(t, "garbage").passed
     assert git(repo, "worktree", "list").count("\n") == 0  # cleaned up
+
+
+def test_per_run_budget_counts_settled_amount(tmp_path):
+    led = Ledger(tmp_path, trainfile.Budget(5, None, "$5 per run"))
+    led.settle(led.reserve(5, "x", run_id="a"), 1)
+    assert led.remaining("a") == 4
+
+
+def test_heldout_id_can_never_be_added_to_training(tmp_path):
+    state = tmp_path / "state"
+    f, _ = _task_folder(tmp_path, "t1")
+    HeldoutStore(state).add(f, Controls(True, False))
+    with pytest.raises(TaskRejected, match="held out"):
+        Store(state).add(f, Controls(True, False))
+
+
+def test_inconclusive_noop_is_not_valid():
+    c = Controls(reference=True, noop=None, detail="environment: python missing")
+    assert not c.valid and "inconclusive" in c.reason()
