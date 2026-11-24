@@ -275,3 +275,18 @@ def test_cli_mine_then_task_commands(tmp_path, writer, repo, capsys):
     assert "held out" in capsys.readouterr().err
     assert run("lint", "--state", state) == 0
     assert run("export", str(tmp_path / "out"), "--state", state) == 0
+
+
+def test_subshell_cd_is_kept_in_the_command():
+    from opentrain.mine import normalize_command
+
+    assert normalize_command("(cd web && npx vitest run)", "/r", ["/r"]) == "cd web && npx vitest run"
+    assert normalize_command("pnpm test", "/r/web", ["/r"]) == "cd web && pnpm test"
+
+
+def test_instruction_takes_every_prompt_in_order():
+    from opentrain.mine import compose_instruction
+
+    text, src = compose_instruction(["look into the parser", "it should accept tabs", "and add a test"], "x")
+    assert src == "3 prompts" and text.index("parser") < text.index("tabs") < text.index("add a test")
+    assert compose_instruction(["only one"], "only one") == ("only one", "first prompt")

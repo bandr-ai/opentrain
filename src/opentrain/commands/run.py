@@ -134,7 +134,16 @@ def cmd_race(args) -> int:
         task = newest_heldout(state)
     runners = {"frontier": make_runner(args.frontier, state=state),
                "specialist": _runner(args, state)}
-    print(race(task, runners, timeout=args.timeout).render())
+    result = race(task, runners, timeout=args.timeout)
+    print(result.render())
+    # Kept for the web UI's Race screen: numbers and the task id only, never the task's content.
+    from dataclasses import asdict
+
+    from ..state import stamp, write_json
+
+    write_json(state / "races" / f"{stamp()}-{task.task_id}.json",
+               {"task_id": task.task_id, "lanes": {k: asdict(v) for k, v in result.lanes.items()},
+                "winner": result.winner})
     return 0
 
 

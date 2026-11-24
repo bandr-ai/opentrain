@@ -16,6 +16,7 @@ is counted as idle.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -49,6 +50,20 @@ _FAIL = re.compile(
     re.MULTILINE,
 )
 _ZERO_FAIL = re.compile(r"\b0 (failed|failing|errors?)\b")
+
+
+def shell_cd(command: str, here: str) -> str:
+    """Where the shell is after ``command``, following top-level ``cd`` (not those in a subshell)."""
+    depth = 0
+    for seg in re.split(r"&&|\|\||;|\n", command):
+        s = seg.strip()
+        opened = s.count("(") - s.count(")")
+        if depth == 0 and (s.startswith("cd ") or s == "cd"):
+            target = s[3:].strip().strip("'\"") if s != "cd" else "~"
+            if target and not target.startswith("-") and "$(" not in target:
+                here = os.path.normpath(os.path.join(here, os.path.expanduser(target)))
+        depth = max(0, depth + opened)
+    return here
 
 
 def discover(root: Path = DEFAULT_ROOT) -> Iterator[Path]:
@@ -89,6 +104,14 @@ def _result_text(block: dict) -> str:
     return ""
 
 
+NOT_HUMAN = re.compile(
+    r"^(<task-notification>|Update on pull requests? #?\d*|This session is being continued from a previous"
+    r"|Caveat: The messages below were generated|\[Sent to Claude from an artifact|\[Artifact comment sent to Claude)"
+)
+"""Messages a harness injects into the user's turn: background-task notices, PR-watch updates,
+compaction summaries, artifact relays. They arrive as user turns but nobody typed them."""
+
+
 def clean_prompt(text: str) -> str:
     """The words a person typed, without the harness's wrappers and reminders."""
     text = _WRAPPERS.sub("", text)
@@ -101,11 +124,28 @@ def _human_prompt(record: dict) -> str | None:
         return None
     if record.get("isCompactSummary") or record.get("isVisibleInTranscriptOnly"):
         return None
+    if record.get("promptSource") == "system" or record.get("turnOrigin") == "task_notification":
+        return None
     blocks = _content(record)
     if not blocks or any(b.get("type") == "tool_result" for b in blocks):
         return None
     text = clean_prompt("\n".join(b.get("text", "") for b in blocks if b.get("type") == "text"))
-    return text or None
+    if not text or NOT_HUMAN.match(text):
+        return None
+    return text
+
+
+def _injected(record: dict) -> bool:
+    """A user-role record that carries text a harness wrote, not a person and not a tool result."""
+    if record.get("isMeta") or record.get("isCompactSummary"):
+        return False
+    blocks = _content(record)
+    if not blocks or any(b.get("type") == "tool_result" for b in blocks):
+        return False
+    if record.get("promptSource") == "system" or record.get("turnOrigin") == "task_notification":
+        return True
+    text = clean_prompt("\n".join(b.get("text", "") for b in blocks if b.get("type") == "text"))
+    return bool(text) and bool(NOT_HUMAN.match(text))
 
 
 def classify_test_result(text: str, is_error: bool) -> str:
@@ -137,6 +177,8 @@ def load_session(path: Path, idle_cap: float = IDLE_CAP) -> Session | None:
                     results[b["tool_use_id"]] = (b, _ts(r))
 
     cwd = branch = session_id = instruction = None
+    shell_here: str | None = None
+    prompts: list[str] = []
     human_turns = 0
     models: list[str] = []
     tool_calls: list[ToolCall] = []
@@ -158,6 +200,8 @@ def load_session(path: Path, idle_cap: float = IDLE_CAP) -> Session | None:
         if rtype not in ("user", "assistant"):
             continue
         cwd = cwd or r.get("cwd")
+        if shell_here is None and r.get("cwd"):
+            shell_here = r["cwd"]
         branch = branch or r.get("gitBranch")
         session_id = session_id or r.get("sessionId")
         ts = _ts(r)
@@ -168,8 +212,14 @@ def load_session(path: Path, idle_cap: float = IDLE_CAP) -> Session | None:
             if not prompt.startswith("[Request interrupted"):
                 human_turns += 1
                 instruction = instruction or prompt
+                prompts.append(prompt)
             if ts:
                 timeline.append((ts, "prompt", None))
+            continue
+
+        if rtype == "user" and ts and not side and _injected(r):
+            # A harness notice (background task done, CI finished) ends a wait on outside work.
+            timeline.append((ts, "injected", None))
             continue
 
         if rtype == "user":
@@ -201,7 +251,9 @@ def load_session(path: Path, idle_cap: float = IDLE_CAP) -> Session | None:
                     edited.append(fp)
             if isinstance(command, str) and TEST_COMMAND.search(command):
                 outcome = "unknown" if res is None else classify_test_result(_result_text(res), is_error)
-                tests.append(TestRun(b["id"], command[:500], ts, outcome))
+                tests.append(TestRun(b["id"], command[:500], ts, outcome, shell_here))
+            if isinstance(command, str) and shell_here and not side:
+                shell_here = shell_cd(command, shell_here)
         if ts and not side:
             timeline.append((ts, "assistant", calls))
 
@@ -226,7 +278,7 @@ def load_session(path: Path, idle_cap: float = IDLE_CAP) -> Session | None:
             continue
         if nxt_kind == "prompt":
             gap = "human"
-        elif pending:
+        elif pending or nxt_kind == "injected":
             gap = "tool"
         else:
             gap = "model"
@@ -245,6 +297,7 @@ def load_session(path: Path, idle_cap: float = IDLE_CAP) -> Session | None:
         ended_at=timeline[-1][0],
         instruction=instruction,
         human_turns=human_turns,
+        prompts=prompts,
         tool_calls=tool_calls,
         intervals=intervals,
         test_runs=tests,

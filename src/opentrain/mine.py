@@ -91,6 +91,32 @@ def _split(cmd: str, seps: tuple[str, ...]) -> list[str]:
     return [p for p in parts if p]
 
 
+def _root_commits(path: str) -> set[str]:
+    out = subprocess.run(["git", "-C", path, "rev-list", "--max-parents=0", "HEAD"], capture_output=True, text=True)
+    return set(out.stdout.split()) if out.returncode == 0 else set()
+
+
+def other_clone_root(here: str, repo_root: str) -> str | None:
+    """The root of another clone of the same repo that ``here`` sits in, if it is one.
+
+    People keep several clones (a main checkout, workspace worktrees, a scratch clone) and a
+    session often edits one and runs the tests in another. A folder that still exists is matched
+    by its root commit; one that is gone, by the repo's folder name in its path.
+    """
+    if os.path.isdir(here):
+        out = subprocess.run(["git", "-C", here, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+        top = out.stdout.strip() if out.returncode == 0 else ""
+        if top and _root_commits(top) & _root_commits(repo_root):
+            return top
+        return None
+    name = os.path.basename(repo_root.rstrip("/"))
+    parts = here.split(os.sep)
+    if name in parts:
+        i = len(parts) - 1 - parts[::-1].index(name)
+        return os.sep.join(parts[: i + 1])
+    return None
+
+
 def normalize_command(raw: str, cwd: str | None, bases: list[str]) -> str | None:
     """The session's test command, made to run from the repo root.
 
@@ -100,6 +126,7 @@ def normalize_command(raw: str, cwd: str | None, bases: list[str]) -> str | None
     here = cwd or bases[0]
     test = None
     for seg in _split(raw, ("&&", "||", ";", "\n")):
+        seg = seg.strip().lstrip("(").rstrip(")").strip()
         words = seg.split(maxsplit=1)
         if words and words[0] == "cd" and test is None:
             target = os.path.expanduser(words[1].strip("'\"")) if len(words) > 1 else "~"
@@ -125,6 +152,11 @@ def normalize_command(raw: str, cwd: str | None, bases: list[str]) -> str | None
             break
     test = " ".join([*kept, test])
 
+    bases = list(bases)
+    if not any(here == b or here.startswith(b.rstrip("/") + "/") for b in bases):
+        other = other_clone_root(here, bases[0])
+        if other:
+            bases.append(other)
     sub = ""
     for base in bases:
         if here == base or here.startswith(base.rstrip("/") + "/"):
@@ -209,13 +241,34 @@ def _command(v: YieldVerdict, test_files: tuple[str, ...]) -> tuple[str, str]:
     """(command, where it came from): the last passing run, else the last run, else inferred."""
     runs = sorted(v.session.test_runs, key=lambda r: r.at)
     for r in [x for x in runs if x.outcome == "pass"][::-1] + runs[::-1]:
-        cmd = normalize_command(r.command, v.session.cwd, _bases(v))
+        cmd = normalize_command(r.command, r.cwd or v.session.cwd, _bases(v))
         if cmd:
             return cmd, "session" if r.outcome == "pass" else f"session ({r.outcome} run)"
     cmd = infer_command(v.repo.root or "", v.repo.base_commit or "", test_files)
     if cmd is None:
         raise MineError("no test command", "the session ran none and none can be inferred from the repo")
     return cmd, "inferred"
+
+
+MAX_PROMPTS = 12
+
+
+def compose_instruction(prompts: list[str], first: str) -> tuple[str, str]:
+    """The task as the person asked for it, over the whole session.
+
+    A first prompt is often an opening ("look into this, it seems broken"), and the spec arrives in
+    later turns. The verifier checks the finished work, so a model handed only the opening could not
+    know what to build. Every prompt the person typed goes in, in order and verbatim. Nothing comes
+    from the agent's replies or the diff, so the instruction cannot leak the reference answer.
+    """
+    asks = [p for p in prompts if p.strip()] or [first]
+    if len(asks) == 1:
+        return asks[0], "first prompt"
+    if len(asks) > MAX_PROMPTS:
+        asks = asks[: MAX_PROMPTS // 2] + asks[-MAX_PROMPTS // 2:]
+    body = "\n\n".join(f"{i}. {a.strip()}" for i, a in enumerate(asks, 1))
+    head = "Over one working session the user asked for the following, in this order. Do all of it.\n\n"
+    return head + body, f"{len(asks)} prompts"
 
 
 def task_id(v: YieldVerdict) -> str:
@@ -299,7 +352,7 @@ def mine(verdict: YieldVerdict, out_dir: Path, test_command: str | None = None) 
     command, source = (test_command, "narrowed") if test_command else _command(verdict, test_files)
     task = Task(
         task_id=task_id(verdict),
-        instruction=s.instruction,
+        instruction=compose_instruction(s.prompts, s.instruction)[0],
         repo=rs.root,
         base_commit=rs.base_commit,
         reference_commit=rs.reference_commit,
@@ -319,7 +372,7 @@ def mine(verdict: YieldVerdict, out_dir: Path, test_command: str | None = None) 
     for d in ("environment", "tests/files", "solution"):
         (folder / d).mkdir(parents=True)
     (folder / "task.toml").write_text(task_toml(task))
-    (folder / "instruction.md").write_text(s.instruction)
+    (folder / "instruction.md").write_text(compose_instruction(s.prompts, s.instruction)[0])
     (folder / "environment" / "Dockerfile").write_text(_dockerfile(task))
     deleted = []
     for rel in test_files:
@@ -335,7 +388,8 @@ def mine(verdict: YieldVerdict, out_dir: Path, test_command: str | None = None) 
     (folder / "solution" / "solve.sh").write_text(_SOLVE_SH)
     for sh in (folder / "tests" / "test.sh", folder / "solution" / "solve.sh"):
         sh.chmod(0o755)
-    meta = {"test_command_source": source, "session_path": s.path, "agent": s.agent,
+    meta = {"test_command_source": source, "instruction_source": compose_instruction(s.prompts, s.instruction)[1],
+            "session_path": s.path, "agent": s.agent,
             "yield": "verified" if verdict.verified else f"repairable ({verdict.skip})"}
     (folder / "meta.json").write_text(json.dumps(meta, indent=2))
     return folder
@@ -366,7 +420,11 @@ def mine_one(v: YieldVerdict, state: Path, timeout: float = 900) -> dict[str, An
         task = read_task(folder)
         controls, runs = run_controls(task, _patch(folder), timeout)
         narrowed_from = None
-        if controls.reference and runs.get("noop") and runs["noop"].kind == "pass":
+        noop_passed = controls.reference and runs.get("noop") and runs["noop"].kind == "pass"
+        # A reference that fails on tests may only be failing tests the change never touched
+        # (a suite needing a database, a known-flaky test). The changed test files alone may hold.
+        ref_failed = not controls.reference and runs.get("reference") and runs["reference"].kind == "tests"
+        if noop_passed or ref_failed:
             narrowed = narrow_command(task.test_command, task.test_files)
             if narrowed and narrowed != task.test_command:
                 folder = mine(v, Path(tmp), test_command=narrowed)

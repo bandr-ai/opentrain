@@ -77,12 +77,33 @@ def checkout(task: Task, keep: bool = False) -> Iterator[Path]:
                 _git(task.repo, "worktree", "prune", check=False)
 
 
+def env_dirs(repo: Path, depth: int = 3) -> list[str]:
+    """Dependency folders anywhere in the top few levels (monorepos keep ``web/node_modules``,
+    ``api/.venv``), never looking inside one, nor inside ``.git``."""
+    names = {Path(r).name for r in ENV_DIRS}
+    found: list[str] = [r for r in ENV_DIRS if "/" in r and (repo / r).is_dir()]
+
+    def walk(d: Path, level: int) -> None:
+        try:
+            children = sorted(c for c in d.iterdir() if c.is_dir() and not c.is_symlink())
+        except OSError:
+            return
+        for c in children:
+            if c.name in names:
+                found.append(str(c.relative_to(repo)))
+            elif level < depth and c.name != ".git" and not c.name.startswith("."):
+                walk(c, level + 1)
+
+    walk(repo, 1)
+    return found
+
+
 def link_env(repo: Path, ws: Path) -> list[str]:
     """Link the main clone's dependency folders into the worktree, where git does not track them."""
     linked = []
-    for rel in ENV_DIRS:
+    for rel in env_dirs(repo):
         src, dest = repo / rel, ws / rel
-        if src.is_dir() and not dest.exists():
+        if src.is_dir() and not dest.exists() and dest.parent.is_dir():
             tracked = subprocess.run(["git", "-C", str(repo), "ls-files", "--error-unmatch", rel],
                                      capture_output=True).returncode == 0
             if not tracked:
@@ -122,7 +143,7 @@ def overlay_tests(task: Task, workspace: Path) -> None:
         dest = workspace / rel
         content = subprocess.run(["git", "-C", task.repo, "show", f"{task.reference_commit}:{rel}"],
                                  capture_output=True)
-        if content.returncode != 0:
+        if content.returncode != 0 or not content.stdout.strip():  # deleted, or emptied, at the reference
             if dest.exists():
                 dest.unlink()  # deleted at the reference
             continue

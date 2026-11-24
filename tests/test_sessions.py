@@ -100,3 +100,53 @@ def test_empty_log_is_none(tmp_path):
     p.parent.mkdir()
     p.write_text('{"type":"mode","mode":"x"}\nnot json\n')
     assert load_session(p) is None
+
+
+def test_shell_cd_follows_top_level_cd_only():
+    from opentrain.sessions.claude_code import shell_cd
+
+    assert shell_cd("cd web && npm test", "/r") == "/r/web"
+    assert shell_cd("(cd web && npm test)", "/r") == "/r"
+    assert shell_cd("cd /abs/x; ls", "/r") == "/abs/x"
+    assert shell_cd("cd .. && cd api", "/r/web") == "/r/api"
+    assert shell_cd("ls", "/r") == "/r"
+
+
+def test_test_runs_remember_the_shells_folder(tmp_path, writer):
+    w = (
+        writer("/r")
+        .prompt(0, "go")
+        .call(1, "a", command="cd web")
+        .result(2, "a")
+        .call(3, "t", command="pnpm test")
+        .result(4, "t", "Tests: 3 passed")
+        .say(5, "ok")
+    )
+    s = load_session(w.write(tmp_path / "p" / "s.jsonl"))
+    assert s.test_runs[0].cwd == "/r/web"
+
+
+def test_injected_turns_are_not_prompts(tmp_path, writer):
+    w = (
+        writer("/r")
+        .prompt(0, "fix the login bug")
+        .prompt(1, "<task-notification><task-id>x</task-id></task-notification>", promptSource="system")
+        .prompt(2, "Update on pull request #250 (https://x): all checks passed")
+        .prompt(3, "This session is being continued from a previous conversation that ran out")
+        .prompt(4, "also keep the old route working")
+        .say(5, "ok")
+    )
+    s = load_session(w.write(tmp_path / "p" / "s.jsonl"))
+    assert s.prompts == ["fix the login bug", "also keep the old route working"]
+
+
+def test_wait_for_background_work_is_not_model_time(tmp_path, writer):
+    w = (
+        writer("/r")
+        .prompt(0, "run the long job in the background")
+        .say(5, "started; I'll wait")
+        .prompt(605, "<task-notification><task-id>x</task-id></task-notification>", promptSource="system")
+        .say(610, "it finished")
+    )
+    s = load_session(w.write(tmp_path / "p" / "s.jsonl"))
+    assert s.seconds("model") == 10 and s.seconds("tool") == 600

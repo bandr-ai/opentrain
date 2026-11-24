@@ -21,7 +21,8 @@ did not pass, and never invent an instruction, a test or an answer.
    a skip is information, not a bug to route around.
 2. **Mine.** `opentrain mine` (add `--include-repairable` to also take sessions whose tests did not
    end green or never ran: the miner runs the tests itself). For each session it:
-   - takes the first prompt verbatim as `instruction.md`;
+   - writes every prompt the person typed, in order and verbatim, as `instruction.md` (harness
+     notices and PR-watch updates are left out; agent replies never go in, so nothing leaks);
    - uses the repo at the last commit before the session as the environment, and the first commit
      after it that touches an edited file as the reference;
    - makes the test files changed between them the verifier and the rest the solution patch;

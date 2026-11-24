@@ -23,7 +23,8 @@ from ..sessions import claude_code
 from ..state import ensure
 from ..tasks import HeldoutStore, Store
 
-REPO_SKILLS = Path(__file__).resolve().parents[3] / "skills"
+PACKAGED_SKILLS = Path(__file__).resolve().parents[1] / "skills"  # installed wheel
+REPO_SKILLS = Path(__file__).resolve().parents[3] / "skills"  # a source checkout
 
 
 def _tf(args) -> trainfile.Trainfile:
@@ -372,7 +373,8 @@ def cmd_revert(args) -> int:
 
 
 def skill_dirs(state: Path) -> list[Path]:
-    return [d for d in (REPO_SKILLS, state / "skills") if d.is_dir()]
+    shipped = REPO_SKILLS if REPO_SKILLS.is_dir() else PACKAGED_SKILLS
+    return [d for d in (shipped, state / "skills") if d.is_dir()]
 
 
 def cmd_skill_ls(args) -> int:

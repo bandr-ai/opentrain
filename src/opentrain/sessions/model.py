@@ -47,6 +47,9 @@ class TestRun:
     command: str
     at: datetime
     outcome: TestOutcome
+    cwd: str | None = None
+    """The shell's folder when the command started. Claude Code's shell keeps its folder between
+    commands, so a bare ``pnpm test`` may have run wherever an earlier ``cd`` left it."""
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,8 @@ class Session:
     instruction: str | None
     """The first thing the person typed. None when the log records no human prompt."""
     human_turns: int
+    prompts: list[str] = field(default_factory=list)
+    """Every prompt the person typed, in order (``instruction`` is the first)."""
     tool_calls: list[ToolCall] = field(default_factory=list)
     intervals: list[Interval] = field(default_factory=list)
     test_runs: list[TestRun] = field(default_factory=list)
