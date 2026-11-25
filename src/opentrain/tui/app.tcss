@@ -1,0 +1,198 @@
+Screen {
+    background: $background;
+    layers: base overlay;
+}
+
+#topbar {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text;
+}
+
+#body {
+    height: 1fr;
+}
+
+#main {
+    width: 1fr;
+}
+
+#log {
+    height: 1fr;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+}
+
+#sidebar {
+    width: 38;
+    padding: 0 1;
+    border-left: tall $panel;
+    display: block;
+}
+
+#sidebar.hidden {
+    display: none;
+}
+
+#sidebar .section-title {
+    color: $text-muted;
+    text-style: bold;
+    margin-top: 1;
+}
+
+#home {
+    padding: 1 2;
+}
+
+.wordmark {
+    color: $accent;
+    text-style: bold;
+}
+
+MessageView {
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+MessageView.user {
+    border-left: thick $accent;
+    padding: 0 1;
+    background: $boost;
+}
+
+MessageView.synthetic {
+    border-left: thick $warning 50%;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+MessageView.assistant {
+    padding: 0 0 0 1;
+}
+
+MessageView .meta {
+    color: $text-muted;
+    height: 1;
+}
+
+MessageView .error {
+    color: $error;
+}
+
+MessageView Markdown {
+    margin: 0;
+    padding: 0;
+}
+
+MessageView.user Markdown, MessageView.synthetic Markdown {
+    margin: 0;
+}
+
+MessageView Markdown > MarkdownBlock:last-child {
+    margin-bottom: 0;
+}
+
+ToolView {
+    height: auto;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+ToolView CollapsibleTitle {
+    padding: 0;
+}
+
+ToolView .output {
+    color: $text-muted;
+    padding: 0 0 0 2;
+    max-height: 20;
+    overflow-y: auto;
+}
+
+ReasoningView {
+    color: $text-muted;
+    text-style: italic;
+    height: auto;
+}
+
+JobCard {
+    height: auto;
+    border: round $accent 60%;
+    padding: 0 1;
+    margin: 0 0 0 2;
+}
+
+#permission {
+    height: auto;
+    border: tall $warning;
+    padding: 0 1;
+    background: $boost;
+    display: none;
+}
+
+#permission.shown {
+    display: block;
+}
+
+#permission Horizontal {
+    height: auto;
+}
+
+#permission Button {
+    margin-right: 1;
+    min-width: 14;
+}
+
+#prompt {
+    height: auto;
+    min-height: 3;
+    max-height: 12;
+    border: tall $accent 40%;
+}
+
+#prompt:focus {
+    border: tall $accent;
+}
+
+#hints {
+    height: 1;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+PickerScreen, KeyScreen, QuestionScreen, TextScreen {
+    align: center middle;
+}
+
+#dialog {
+    width: 90;
+    max-width: 95%;
+    height: auto;
+    max-height: 80%;
+    border: thick $accent;
+    background: $surface;
+    padding: 1 2;
+}
+
+#dialog .title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#dialog .help {
+    color: $text-muted;
+    margin-top: 1;
+}
+
+#dialog OptionList {
+    height: auto;
+    max-height: 24;
+}
+
+#dialog VerticalScroll {
+    height: auto;
+    max-height: 30;
+}

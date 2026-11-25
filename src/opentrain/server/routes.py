@@ -293,3 +293,15 @@ async def get_config(request: web.Request):
 async def mcp_status(request: web.Request):
     m = project_of(request).services.get("mcp")
     return ok(m.status if m else {})
+
+
+@routes.get("/api/status")
+async def project_status(request: web.Request):
+    import asyncio as _asyncio
+
+    from ..core.tools.train import project_status as status
+
+    p = project_of(request)
+    out = await _asyncio.to_thread(status, p)
+    out["project"] = p.info()
+    return ok(out)

@@ -58,19 +58,23 @@ def _started(job: dict[str, Any], what: str) -> ToolResult:
 
 
 def status(ctx: ToolContext) -> Any:
+    return project_status(ctx.project)
+
+
+def project_status(project: Any) -> dict[str, Any]:
     from ... import trainfile
     from ...budget import Ledger
     from ...registry import Registry
     from ...serving import live_version
     from ...tasks import HeldoutStore, Store
 
-    state, d = ctx.project.state, ctx.project.directory
+    state, d = project.state, project.directory
     tf_path = trainfile.find(d)
     tf = trainfile.for_project(d)
     reg = Registry(state)
     cur = reg.current()
     ledger = Ledger(state, tf.budget)
-    jobs = _jobs(ctx).list(active=True)
+    jobs = project.services["jobs"].list(active=True)
     return {
         "trainfile": str(tf_path) if tf_path else "none (defaults apply; the init tool writes one)",
         "policy": {"goal": tf.goal, "budget": tf.budget.describe(), "promote": tf.promote, "trainer": tf.trainer,
