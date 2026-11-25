@@ -196,3 +196,28 @@ def load(path: Path | None = None) -> Trainfile:
     if path is None:
         return parse(DEFAULT)
     return parse(path.read_text(), str(path))
+
+
+def set_value(directory: Path, key: str, value: str) -> Path:
+    """Set one line of the project's Trainfile (writing the defaults first if there is none).
+
+    The other lines, comments and alignment are kept; the result must still parse.
+    """
+    if key not in KEYS:
+        raise TrainfileError(f"unknown setting {key!r}")
+    path = find(Path(directory)) or Path(directory) / "Trainfile"
+    text = path.read_text() if path.exists() else DEFAULT
+    lines, done = text.splitlines(), False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            k, _ = _split(stripped.split(" #", 1)[0])
+            if k == key:
+                lines[i] = f"{key:<12} {value}"
+                done = True
+    if not done:
+        lines.append(f"{key:<12} {value}")
+    new = "\n".join(lines) + "\n"
+    parse(new, str(path))
+    path.write_text(new)
+    return path

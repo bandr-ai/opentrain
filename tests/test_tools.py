@@ -12,11 +12,15 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
 
+ALLOW = [{"action": "*", "resource": "*", "effect": "allow"}]
+
+
 def call(live, name, tool, args, then=None, model=None, agent=None):
     """Run one scripted turn that calls ``tool`` and return its tool part."""
     c = live.client(live.proj)
     ScriptedProvider.register(name, [[{"tool": tool, "input": args}], then or ["ok"]])
-    s = c.post("/api/session", {"model": f"scripted/{name}", **({"agent": agent} if agent else {})})
+    s = c.post("/api/session", {"model": f"scripted/{name}", "permissions": ALLOW,
+                                **({"agent": agent} if agent else {})})
     c.post(f"/api/session/{s['id']}/prompt", {"text": "go"})
     c.post(f"/api/session/{s['id']}/wait", {"timeout": 30})
     msgs = c.get(f"/api/session/{s['id']}/message")
@@ -31,7 +35,7 @@ def test_read_write_edit_cycle(live):
     ScriptedProvider.register("rw2", [[{"tool": "read", "input": {"path": "a.txt"}}],
                                       [{"tool": "edit", "input": {"path": "a.txt", "old": "two", "new": "2"}}],
                                       [{"tool": "write", "input": {"path": "sub/b.txt", "content": "new"}}], ["done"]])
-    s = c.post("/api/session", {"model": "scripted/rw2"})
+    s = c.post("/api/session", {"model": "scripted/rw2", "permissions": ALLOW})
     c.post(f"/api/session/{s['id']}/prompt", {"text": "go"})
     c.post(f"/api/session/{s['id']}/wait", {"timeout": 30})
     tools = [p["tool"] for m in c.get(f"/api/session/{s['id']}/message") for p in m["parts"] if p["type"] == "tool"]

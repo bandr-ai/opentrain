@@ -12,6 +12,10 @@ from .app import Hub
 
 
 def attach_all(hub: Hub) -> None:
+    from ..core.integrations import load_into_env, load_plugins
+
+    load_into_env()
+    load_plugins()
     hub.attachers.append(_engine)
 
 

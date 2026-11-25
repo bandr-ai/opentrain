@@ -85,9 +85,15 @@ def repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def live(tmp_path):
-    """A running server whose default project is ``tmp_path / 'proj'``."""
+def live(tmp_path, monkeypatch):
+    """A running server whose default project is ``tmp_path / 'proj'``, with its own config, data
+    and state homes so nothing of the real user's leaks in or out."""
     import sys
+
+    for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
+        monkeypatch.setenv(var, str(tmp_path / var.lower()))
+    for var in ("ANTHROPIC_API_KEY", "TINKER_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
 
     sys.path.insert(0, str(Path(__file__).parent))
     from harness import LiveServer

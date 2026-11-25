@@ -152,3 +152,98 @@ async def approvals(request: web.Request):
 async def revoke(request: web.Request):
     project_of(request).services["permissions"].revoke(request.match_info["aid"])
     return ok({"revoked": request.match_info["aid"]})
+
+
+@routes.get("/api/integration")
+async def integrations(request: web.Request):
+    from ..core.integrations import listing
+
+    return ok(listing())
+
+
+@routes.post("/api/integration/{iid}/connect")
+async def connect_integration(request: web.Request):
+    from ..core.integrations import connect
+
+    b = await body_of(request)
+    try:
+        return ok(connect(request.match_info["iid"], b.get("key") or ""))
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from None
+
+
+@routes.delete("/api/integration/{iid}")
+async def disconnect_integration(request: web.Request):
+    from ..core.integrations import disconnect
+
+    return ok({"removed": disconnect(request.match_info["iid"])})
+
+
+@routes.get("/api/model")
+async def models(request: web.Request):
+    from ..core.providers import default_model, providers as all_providers
+
+    session_model = None
+    if request.query.get("session"):
+        p = project_of(request)
+        s = p.session(request.query["session"])
+        session_model = p.services["runner"].resolve_model(s, p.services["agents"].get(s.get("agent")))
+    rows = []
+    for prov in all_providers():
+        for m in prov.models:
+            rows.append({"ref": m.ref, "name": m.name, "provider": prov.id, "provider_name": prov.name,
+                         "connected": prov.connected, "context": m.context,
+                         "input_price": m.input_price, "output_price": m.output_price})
+    return ok({"models": rows, "default": default_model(), "session": session_model})
+
+
+@routes.post("/api/model/default")
+async def set_default_model(request: web.Request):
+    from ..core import config
+    from ..core.llm import parse_ref
+
+    b = await body_of(request)
+    ref = b.get("ref") or ""
+    try:
+        parse_ref(ref)
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from None
+    config.save_global({"model": ref})
+    return ok({"default": ref})
+
+
+@routes.get("/api/trainer")
+async def trainers(request: web.Request):
+    from ..core.integrations import trainers as list_trainers
+
+    p = project_of(request)
+    return ok({"trainers": list_trainers(p.state), "policy": p.info().get("policy")})
+
+
+@routes.post("/api/trainer")
+async def set_trainer(request: web.Request):
+    """Set the project's trainer and/or base model in its Trainfile."""
+    from .. import trainfile
+
+    b = await body_of(request)
+    p = project_of(request)
+    path = None
+    try:
+        if b.get("trainer"):
+            from ..backends import BACKENDS
+
+            if b["trainer"] not in BACKENDS:
+                raise ApiError(400, f"no trainer {b['trainer']!r}; known: {', '.join(BACKENDS)}")
+            path = trainfile.set_value(p.directory, "trainer", b["trainer"])
+        if b.get("base_model"):
+            path = trainfile.set_value(p.directory, "base model", b["base_model"])
+    except trainfile.TrainfileError as exc:
+        raise ApiError(400, str(exc)) from None
+    return ok({"trainfile": str(path) if path else None, "policy": p.info().get("policy")})
+
+
+@routes.get("/api/datasource")
+async def datasources(request: web.Request):
+    from ..core.integrations import data_sources
+
+    return ok(data_sources())
