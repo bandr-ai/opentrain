@@ -32,4 +32,6 @@ def extra_routes() -> list[web.RouteTableDef]:
 
 
 def configure_app(app: web.Application) -> None:
-    pass
+    from .app import DEFAULT_AGENT
+
+    app[DEFAULT_AGENT] = lambda p: p.services["agents"].default()
