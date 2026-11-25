@@ -19,6 +19,11 @@ from ..web import api
 from .app import ApiError, body_of, ok, project_of
 
 STATIC = Path(__file__).resolve().parent.parent / "web" / "static"
+APP = Path(__file__).resolve().parent.parent / "web" / "app"
+"""The web app (built from ``web/`` with ``pnpm build``). The older single-file dashboard in
+``static`` is the fallback when the app was not built."""
+TYPES = {".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png",
+         ".woff2": "font/woff2", ".json": "application/json", ".ico": "image/x-icon"}
 TOKEN_MARK = "__OPENTRAIN_TOKEN__"
 DIR_COOKIE = "opentrain_dir"
 SECURITY = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
@@ -35,11 +40,22 @@ def _state(request: web.Request) -> Path:
 
 @routes.get("/")
 async def index(request: web.Request):
-    html = (STATIC / "index.html").read_text().replace(TOKEN_MARK, "cookie")
-    resp = web.Response(text=html, content_type="text/html", headers=SECURITY)
+    built = APP / "index.html"
+    html = built.read_text() if built.exists() else (STATIC / "index.html").read_text().replace(TOKEN_MARK, "cookie")
+    resp = web.Response(text=html, content_type="text/html", headers={**SECURITY, "Cache-Control": "no-cache"})
     if request.query.get("directory"):
         resp.set_cookie(DIR_COOKIE, request.query["directory"], httponly=True, samesite="Strict")
     return resp
+
+
+@routes.get("/assets/{name}")
+async def asset(request: web.Request):
+    name = request.match_info["name"]
+    p = (APP / "assets" / name).resolve()
+    if not p.is_file() or p.parent != (APP / "assets").resolve():
+        raise web.HTTPNotFound()
+    return web.Response(body=p.read_bytes(), content_type=TYPES.get(p.suffix, "application/octet-stream"),
+                        headers={**SECURITY, "Cache-Control": "public, max-age=31536000, immutable"})
 
 
 @routes.get("/app.js")
