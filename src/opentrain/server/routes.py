@@ -73,3 +73,56 @@ async def providers(request: web.Request):
     from ..core.providers import default_model, providers as all_providers
 
     return ok({"providers": [p.public() for p in all_providers()], "default": default_model()})
+
+
+@routes.post("/api/session/{sid}/question/{qid}/reply")
+async def question_reply(request: web.Request):
+    b = await body_of(request)
+    qs = project_of(request).services["questions"]
+    return ok(qs.reply(request.match_info["qid"], b.get("answers"), rejected=bool(b.get("reject"))))
+
+
+@routes.get("/api/question")
+async def questions(request: web.Request):
+    return ok(project_of(request).services["questions"].pending(request.query.get("session")))
+
+
+@routes.get("/api/job")
+async def jobs(request: web.Request):
+    return ok(project_of(request).services["jobs"].list(request.query.get("session"),
+                                                        active=request.query.get("active") == "1"))
+
+
+@routes.get("/api/job/{jid}")
+async def job(request: web.Request):
+    return ok(project_of(request).services["jobs"].get(request.match_info["jid"]))
+
+
+@routes.get("/api/job/{jid}/logs")
+async def job_logs(request: web.Request):
+    tail = int(request.query.get("tail", 200))
+    return ok({"lines": project_of(request).services["jobs"].logs(request.match_info["jid"], tail)})
+
+
+@routes.post("/api/job/{jid}/cancel")
+async def job_cancel(request: web.Request):
+    return ok(project_of(request).services["jobs"].cancel(request.match_info["jid"]))
+
+
+@routes.get("/api/session/{sid}/todo")
+async def todos(request: web.Request):
+    p = project_of(request)
+    t = p.store.get("todo", f"todo_{request.match_info['sid']}")
+    return ok((t or {}).get("todos", []))
+
+
+@routes.get("/api/skill")
+async def skills(request: web.Request):
+    from ..core.skills import Skills
+
+    return ok([s.public() for s in Skills(project_of(request).directory).all().values()])
+
+
+@routes.get("/api/tool")
+async def tools(request: web.Request):
+    return ok([t.spec() for t in project_of(request).services["tools"].tools.values()])

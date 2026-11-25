@@ -185,6 +185,12 @@ def find(start: Path | None = None) -> Path | None:
     return None
 
 
+def for_project(directory: Path) -> Trainfile:
+    """The Trainfile governing ``directory``, or the defaults. Never looks at the process's cwd."""
+    path = find(Path(directory))
+    return parse(path.read_text(), str(path)) if path else parse(DEFAULT)
+
+
 def load(path: Path | None = None) -> Trainfile:
     path = path or find()
     if path is None:

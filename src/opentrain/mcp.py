@@ -34,7 +34,7 @@ from .plugs import TrainSpec
 from .record import RunRecord
 from .registry import Registry
 from .tasks import HeldoutStore, Store
-from .trainfile import Trainfile, find, load  # noqa: F401
+from .trainfile import Trainfile, find, for_project, load  # noqa: F401
 
 PROTOCOL = "2025-06-18"
 
@@ -91,7 +91,7 @@ class Server:
         if role not in TOOLS_BY_ROLE:
             raise ValueError(f"unknown role {role!r}")
         self.state, self.role = state, role
-        self.tf = tf or load(find(state.parent))
+        self.tf = tf or for_project(state.parent)
         self.record = RunRecord(state)
         self.run = self.record.get(run_id) if run_id else self.record.open(f"mcp:{role}", {"goal": self.tf.goal})
         self.ledger = Ledger(state, self.tf.budget)

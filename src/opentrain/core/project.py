@@ -38,7 +38,7 @@ class Project:
                                "trainfile": str(tf_path) if tf_path else None,
                                "git": (self.directory / ".git").exists()}
         try:
-            tf = trainfile.load(tf_path)
+            tf = trainfile.for_project(self.directory)
             out["policy"] = {"goal": tf.goal, "budget": tf.budget.describe(), "trainer": tf.trainer,
                              "base_model": tf.base_model, "runtime": tf.runtime, "heldout": tf.heldout_fraction,
                              "eval_cap": tf.eval_cap}

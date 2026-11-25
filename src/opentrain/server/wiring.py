@@ -20,9 +20,16 @@ def _engine(hub: Hub, p: Project) -> None:
     from ..core.runner import Runner
     from ..core.tool import Registry
 
+    from ..core.jobs import Jobs
+    from ..core.questions import Questions
+    from ..core.tools import register_all
+
     p.services["agents"] = Agents(p)
     p.services["tools"] = Registry()
+    register_all(p)
+    p.services["questions"] = Questions(p)
     p.services["runner"] = Runner(p, hub.loop)
+    p.services["jobs"] = Jobs(p, hub.loop)
 
 
 def extra_routes() -> list[web.RouteTableDef]:
