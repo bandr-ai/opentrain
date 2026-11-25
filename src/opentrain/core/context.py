@@ -56,9 +56,30 @@ def environment(project: Any) -> str:
     return "\n".join(lines)
 
 
+def configured_instructions(directory: Path) -> list[tuple[str, str]]:
+    """Extra instruction files named under ``instructions`` in opentrain.jsonc (paths or globs)."""
+    from . import config
+
+    try:
+        names = config.load(directory).get("instructions") or []
+    except ValueError:
+        return []
+    out = []
+    for n in names:
+        for f in sorted(directory.glob(n)) if not Path(n).expanduser().is_absolute() else [Path(n).expanduser()]:
+            if f.is_file():
+                out.append((str(f), f.read_text(errors="replace")[:20_000]))
+    return out
+
+
 def system_prompt(project: Any, agent: Any, extra: list[str] | None = None) -> str:
+    from .skills import Skills
+
     parts = [agent.prompt.strip(), "# Environment\n" + environment(project)]
-    for path, text in instructions(project.directory):
+    index = Skills(project.directory).index()
+    if index:
+        parts.append("# Skills (load one with the skill tool before running that recipe)\n" + index)
+    for path, text in instructions(project.directory) + configured_instructions(project.directory):
         parts.append(f"# Instructions from {path}\n{text.strip()}")
     parts.extend(extra or [])
     return "\n\n".join(p for p in parts if p)

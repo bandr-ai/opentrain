@@ -247,3 +247,49 @@ async def datasources(request: web.Request):
     from ..core.integrations import data_sources
 
     return ok(data_sources())
+
+
+@routes.get("/api/command")
+async def commands(request: web.Request):
+    from ..core.commands import load
+
+    return ok([c.public() for c in load(project_of(request).directory).values()])
+
+
+@routes.post("/api/session/{sid}/command")
+async def run_command(request: web.Request):
+    from ..core.commands import load
+
+    b = await body_of(request)
+    p = project_of(request)
+    cmds = load(p.directory)
+    name = (b.get("name") or "").lstrip("/")
+    if name not in cmds:
+        raise ApiError(404, f"no command /{name}; known: {', '.join('/' + n for n in sorted(cmds))}", "not_found")
+    cmd = cmds[name]
+    text = cmd.expand(b.get("arguments") or "")
+    item = p.services["runner"].prompt(request.match_info["sid"], text, delivery=b.get("delivery", "steer"),
+                                       agent=cmd.agent, model=cmd.model)
+    return ok({**item, "command": name}, 202)
+
+
+@routes.get("/api/config")
+async def get_config(request: web.Request):
+    from ..core import config
+
+    p = project_of(request)
+    try:
+        cfg = config.load(p.directory)
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from None
+    providers = {k: {kk: vv for kk, vv in v.items() if kk not in ("api_key", "key")}
+                 for k, v in (cfg.get("providers") or {}).items() if isinstance(v, dict)}
+    agents = p.services["agents"]
+    return ok({**cfg, "providers": providers, "agent_problems": agents.problems,
+               "global_dir": str(config.global_dir())})
+
+
+@routes.get("/api/mcp")
+async def mcp_status(request: web.Request):
+    m = project_of(request).services.get("mcp")
+    return ok(m.status if m else {})

@@ -101,10 +101,25 @@ class Runner:
         patch = {k: v for k, v in {"agent": agent, "model": model}.items() if v}
         if patch:
             self.store.update("session", sid, patch)
+        if not synthetic:
+            self._first_run()
         item = self.store.create("inbox", {"session_id": sid, "text": text, "delivery": delivery, "status": "pending",
                                            "synthetic": synthetic, "files": files or [], "time": {"created": _now()}})
         self.wake(sid)
         return item
+
+    def _first_run(self) -> None:
+        """The first prompt in a project writes the default Trainfile, so the policy is visible and
+        editable from the start; nothing is ever required before it."""
+        from .. import trainfile
+
+        d = self.project.directory
+        if trainfile.find(d) is None and (d / ".git").exists():
+            try:
+                (d / "Trainfile").write_text(trainfile.DEFAULT)
+                self.store.publish("trainfile.created", {"path": str(d / "Trainfile")})
+            except OSError:
+                pass
 
     def wake(self, sid: str) -> None:
         loop = self.loop or asyncio.get_event_loop()

@@ -38,6 +38,13 @@ def _engine(hub: Hub, p: Project) -> None:
     p.services["runner"] = Runner(p, hub.loop)
     p.services["runner"].on_usage.append(BudgetHook(p))
     p.services["jobs"] = Jobs(p, hub.loop)
+    from ..core.mcp_client import McpServers
+
+    mcp = McpServers(p)
+    p.services["mcp"] = mcp
+    import threading
+
+    threading.Thread(target=mcp.start, name=f"mcp {p.name}", daemon=True).start()
 
 
 def extra_routes() -> list[web.RouteTableDef]:
