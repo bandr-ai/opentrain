@@ -70,7 +70,8 @@ async def agents(request: web.Request):
 
 @routes.get("/api/provider")
 async def providers(request: web.Request):
-    from ..core.providers import default_model, providers as all_providers
+    from ..core.providers import default_model
+    from ..core.providers import providers as all_providers
 
     return ok({"providers": [p.public() for p in all_providers()], "default": default_model()})
 
@@ -181,7 +182,8 @@ async def disconnect_integration(request: web.Request):
 
 @routes.get("/api/model")
 async def models(request: web.Request):
-    from ..core.providers import default_model, providers as all_providers
+    from ..core.providers import default_model
+    from ..core.providers import providers as all_providers
 
     session_model = None
     if request.query.get("session"):

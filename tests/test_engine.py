@@ -187,10 +187,10 @@ def test_mcp_roles_and_refusals(tmp_path):
 def test_cli_surface_parses(tmp_path, capsys):
     from opentrain.cli import main
 
-    assert main(["init", "--state", str(tmp_path)]) == 0
+    assert main(["debug", "init", "--state", str(tmp_path)]) == 0
     assert (tmp_path / "Trainfile").exists()
-    assert main(["status", "--state", str(tmp_path)]) == 0
+    assert main(["debug", "status", "--state", str(tmp_path)]) == 0
     assert "goal/speed" in capsys.readouterr().out
-    assert main(["log", "--state", str(tmp_path)]) == 0
-    assert main(["skill", "ls", "--state", str(tmp_path)]) == 0
+    assert main(["debug", "log", "--state", str(tmp_path)]) == 0
+    assert main(["debug", "skill", "ls", "--state", str(tmp_path)]) == 0
     assert "cl/mine" in capsys.readouterr().out

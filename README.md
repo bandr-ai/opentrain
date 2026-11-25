@@ -1,180 +1,170 @@
 # OpenTrain
 
-**The open source post-training harness.** What opencode is for coding, OpenTrain is for training.
+**The open harness for training models.** What opencode is for coding, OpenTrain is for training.
 
-Your agent sessions already hold the data. OpenTrain turns them into verified tasks, trains a small
-model on them, and ships a new version only if it beats the current one on work it has never seen.
-The first feature trains a personal coding model from your Claude Code sessions.
+You talk to an agent; the thing it works on is a model, not a codebase. It turns your own work (your
+coding-agent sessions and repos) into verified tasks, trains a model on them, and ships a new version
+only when it beats the current one on work it has never seen. It asks before it spends money, uploads
+data or changes what is live.
 
 ```
-$ opentrain train
-
-Engine      claude, your own login
-Found       412 Claude Code sessions in 9 folders
-Trainer is building tasks...
-  137 verified tasks, 61 held out for the evaluator
-  275 skipped (140 no repo state, 98 no tests in repo, 37 controls failed)
-Evaluator   frontier:claude: 41% pass, 3m40 median
-Sampling    frontier (claude, headless): 4 attempts on each of 76 training tasks
-  58 of 76 tasks have a verified pass (18 never passed)
-
-Proposed    goal/speed: tune Qwen/Qwen3-8B on shortest verified passes
-            est. $14.20 on tinker, uploads 58 redacted tasks; $40.00 of $40 a week left
-Proceed? [y/n] y
-Training    job tinker-20261124-a1b2c3 on tinker
-Evaluator   scoring v1 on 61 held-out tasks...
-
-v1 passed the gate
-  Median task   3m40 -> 22s
-  Pass rate     41% -> 58%    11 fixed, 0 regressed (opentrain diff)
-  Live as opentrain/v1 and opentrain/current (opentrain serve; opentrain connect pi)
+$ opentrain
 ```
 
-*(Output shape of a real run; the numbers above are illustrative, not a measurement.)*
+```
+ OpenTrain  myrepo │ train  claude-code/default │ idle │ budget $0 used · $40 left
 
-## What is real today
+ ▌ make me a model that does my routine coding work much faster
 
-| Part | State |
-| --- | --- |
-| Session reading, task yield, time breakdown, held-out split (v0.1 bench) | Runs on real Claude Code logs |
-| Mining sessions into Harbor tasks with certified verifiers | Runs on real repos; first real task certified |
-| Direct runtime (any OpenAI-compatible model) and headless runtime (`claude -p`, `codex exec`) | Claude headless checked against real runs; Codex flags from docs, untested |
-| Sampling, shortest-pass SFT data, evaluator, gate, registry, run record, budget | Tested end to end on real git repos with stand-in models |
-| Tinker backend | Written against the documented SDK (0.40) and cookbook; **no real training run yet** (needs `TINKER_API_KEY`) |
-| Local backend (TRL + PEFT LoRA) | Written; untested here (needs torch and a GPU or MPS) |
-| `opentrain serve` (OpenAI-compatible proxy, hot switch, frontier handoff) | Tested against local fake upstreams |
-| MCP train tools, agent mode (`opentrain run`) | Protocol tested; a full agent-driven training run not yet done |
-| Web UI | All 8 screens checked in a browser against synthetic state |
+ train · claude-code/default · 6.2s
+ I'll check where things stand, then mine your sessions into verified tasks.
+ ▶ ✓ status
+ ▶ ✓ tasks_mine  mining tasks
+   ┌ mine  mine sessions into tasks ───────────────────────────┐
+   │ ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱  running  1m12s                       │
+   └───────────────────────────────────────────────────────────┘
+ ┌──────────────────────────────────────────────────────────────┐
+ │ train wants to spend $14.20 on tinker   (budget left $40.00) │
+ │ [1 Allow once]  [2 Always]  [3 Reject]                        │
+ └──────────────────────────────────────────────────────────────┘
+```
 
 ## Install
 
 ```bash
 uv tool install "opentrain-cli[tinker] @ git+https://github.com/bandr-ai/opentrain"
-# or, to train on your own GPU:  opentrain-cli[local]
+cd your-repo && opentrain
 ```
 
-Python 3.11+. The core has no dependencies; each trainer backend brings its own.
+Python 3.11+. The engine runs on whatever you already have: your own **Claude Code** login (no key
+needed), or an Anthropic, OpenAI, OpenRouter, Together, Groq or Fireworks key, or a local model.
+`/connect` adds keys; `/models` picks one.
 
-## Quickstart
+## How it is built
 
-```bash
-cd your-repo
-opentrain init        # writes a Trainfile: goal, budget, gate
-opentrain bench       # how many of your sessions can become tasks, and where your time goes
-opentrain mine        # sessions -> verified tasks, split held-out by date
-opentrain train       # sample, train, evaluate, gate (asks before spending or uploading)
-opentrain serve       # opentrain/current as an OpenAI-compatible endpoint
-opentrain connect pi  # config for pi, opencode or Claude Code
-opentrain web         # the dashboard
+The same shape as opencode: one server per user, and every front end is a client of it.
+
+```
+  opentrain (terminal app)   opentrain run "..."   opentrain web   SDK / scripts
+            └──────────────────────┬──────────────────────┘
+                     HTTP /api  +  SSE /api/event
+            ┌──────────────────────┴──────────────────────┐
+            │  server: projects, sessions, event log      │
+            │  engine: the agent loop (train, plan, ...)  │
+            │  tools ── permissions ── budget ── jobs     │
+            │  evaluator (own process) ── gate ── registry│
+            └──────┬──────────────┬──────────────┬────────┘
+              model providers   trainers      data sources, serving
 ```
 
-Then let it run by itself: `opentrain watch`. When the model gets something wrong:
-`opentrain fix --session latest -m "it keeps using our old auth API"`.
+- **The server** owns everything and keeps running when you close the terminal. It registers
+  itself in `~/.local/state/opentrain/service.json`; clients find it or start it.
+- **State is event-sourced.** Every change is an event in `.opentrain/opentrain.db`, hash-chained
+  so any edit to history is detectable. Sessions, messages, parts, jobs and approvals are
+  projections of it.
+- **The engine** is its own agent loop: steer a turn while it runs, interrupt it, compaction near
+  the context limit, subagents in child sessions, a doom-loop guard, a step limit. With Claude Code
+  as the provider, `claude -p` runs with no built-in tools and gets OpenTrain's tools over MCP, so
+  every call is checked and recorded by the server either way.
+- **Jobs belong to the server.** Mining, sampling, scoring and training return at once; clients see
+  progress live, and the agent gets a reminder when a job ends.
+
+## Agents
+
+| Agent | Can |
+| --- | --- |
+| `train` (default) | everything within the Trainfile, asking before shell commands, edits, spending, uploading, launching, promoting and serving |
+| `plan` (tab) | read, scan sessions, estimate cost; never spends, trains or changes files (except plans) |
+| `data` (subagent) | mine and repair tasks, draft verifiers |
+| `monitor` (subagent) | look at jobs, read-only |
+| `evaluator` (hidden) | the only reader of held-out tasks; runs in its own process |
+
+Agents are Markdown files with front matter (description, mode, model, steps, permissions). Add
+or override them in `~/.config/opentrain/agents/` or `.opentrain/agents/`.
+
+## Why a separate harness, and what it guarantees
+
+General coding agents asked to post-train a model reach about half of a vendor's tuned result, and
+they cheat: they train on the test set, swap in other checkpoints and use keys they find. OpenTrain
+keeps the parts that must be trusted out of the training agent's hands:
+
+- **The trainer never sees held-out tasks.** They are sealed from every tool, and every shell the
+  harness starts (the agent's, the teacher's, a candidate model's) runs in an OS sandbox that cannot
+  read them, the event log or your stored keys (Seatbelt on macOS, bubblewrap on Linux).
+- **The evaluator is its own process** and returns pass/fail and time per task id, never content,
+  a capped number of times per run.
+- **Every verifier is proven before it counts**: the reference passes, doing nothing fails, a
+  known-wrong answer fails; re-checked at every evaluation.
+- **The gate decides, not the agent**: better on the goal, no held-out task regresses, and a
+  provenance check from the checkpoint back (enough held-out tasks, records intact, the Trainfile's
+  base model, no held-out task or its text in the training data).
+- **The budget is enforced by the server** across engine tokens, sampling and training: reserve
+  first, settle to actual.
+- **Nothing leaves your machine without an approval** that says what would be uploaded.
 
 ## The Trainfile
 
-The one file you edit. The server enforces every line; the engine cannot change it mid-run.
+The policy, enforced by the server. Written with defaults the first time you use OpenTrain in a
+repo; edit it any time (or use `/trainer`).
 
 ```
 goal         speed
 budget       $40 a week, model tokens and compute together
 promote      beats current on held-out, no task regresses
-runtime      claude -p
 trainer      tinker
 base model   Qwen/Qwen3-8B
-data         my agent sessions, redacted, local until I approve
 heldout      30%
 eval cap     8 per run
-watch        when 30 new sessions arrive, or nightly
-provider     https://openrouter.ai/api/v1 key OPENROUTER_API_KEY   # optional: sample the base model itself
 ```
 
-## How it works
-
-```
- sessions ──> cl/mine ──> tasks ──split by date──> training tasks ──> cl/rollout ──> data/shortest ──> train/sft
-                 │                       │                                                              │
-          bandits/certify          held-out tasks ──────────── evaluator (pass/fail only) <──── new version
-     (reference passes,                                                    │
-      doing nothing fails)                                       gate: better, nothing regresses
-                                                                           │
-                                                              promote -> opentrain serve
-```
-
-**Why a separate harness.** General coding agents asked to post-train a model reach about half of a
-vendor's tuned result, and they cheat: they train on the test set and use keys they find. OpenTrain
-keeps the parts that must be trusted out of the training agent's hands:
-
-- **Trainer and evaluator are separate roles.** The trainer never reads held-out tasks. The evaluator
-  returns pass/fail and time per task id, never content, and only a capped number of times per run.
-- **Every verifier is proven before it counts.** The reference answer must pass, doing nothing must
-  fail, a known-wrong answer must fail. An environment failure is not a pass.
-- **The gate decides, not the trainer.** Better on the goal, no held-out task regresses, verifiers
-  re-checked at every evaluation.
-- **The budget is enforced by the server.** Every model call and training job reserves its estimate
-  first; a run cannot raise the budget.
-- **The run record is append-only and hash-chained.** Any score traces back to its data, recipe and
-  checkpoint (`opentrain log <run>`).
-- **Nothing leaves your machine until you approve it.** The approval step shows what would be uploaded.
+`opentrain.jsonc` (global and per project) sets up the harness itself: `model`, `default_agent`,
+`agents`, `permissions`, `providers`, `mcp` servers, `commands`, `instructions`, `skills`.
 
 ## Commands
 
-| Command | Does |
+| | |
 | --- | --- |
-| `opentrain` | Opens with the status; on first use, shows where to start |
-| `opentrain run "..."` | One instruction to the engine (your own `claude -p` with OpenTrain's train tools) |
-| `opentrain init`, `status` | Write a Trainfile; what is live, what it cost |
-| `opentrain session import` | Index your coding-agent sessions |
-| `opentrain bench [yield\|time\|split\|models]` | v0.1: task yield, time breakdown, held-out split, model baselines |
-| `opentrain mine`, `lint` | Sessions into tasks; re-check every verifier |
-| `opentrain sample`, `data build` | Attempts on training tasks; the SFT set from the shortest passes |
-| `opentrain train`, `eval` | Run the goal end to end; score a model on held-out tasks |
-| `opentrain watch`, `fix`, `approve` | The unattended loop; file a bug against the model; allow unattended uploads |
-| `opentrain race` | One of your tasks, frontier vs specialist, side by side |
-| `opentrain diff`, `log`, `revert` | What flipped between versions; the run record; put the previous version back |
-| `opentrain serve`, `connect`, `model ls\|use` | Serve `opentrain/current`; configure pi, opencode, Claude Code; switch versions |
-| `opentrain backends`, `job ps\|logs\|cancel` | Trainer backends and jobs |
-| `opentrain export` | Tasks (Harbor), evals and training set in open formats |
-| `opentrain task ls\|show`, `skill ls\|add` | The task store; recipes |
-| `opentrain web` | Runs, evals, versions, race, data, skills, policy |
+| `opentrain [dir]` | the terminal app |
+| `opentrain run "..."` | one instruction, no interface (`--yes` approves asks, `--json` streams events) |
+| `opentrain serve` | the server in the foreground (`--host`, `--password` for a remote box) |
+| `opentrain web` | the dashboard in a browser (one-time sign-in link) |
+| `opentrain attach URL` | the terminal app against a server elsewhere |
+| `opentrain export` | tasks and training set in open formats, for any trainer |
+| `opentrain model serve` | a trained version as an OpenAI-compatible endpoint |
+| `opentrain debug ...` | every pipeline step on its own (bench, mine, sample, eval, ...) |
 
-`ot` is a short alias. Words that mean the same thing in opencode are spelled the same.
+In the terminal app: **enter** send · **ctrl+j** new line · **tab** train ⇄ plan · **esc** interrupt ·
+**ctrl+p** commands · **ctrl+o** models · **ctrl+l** sessions · **ctrl+b** sidebar. Slash commands:
+`/train` `/status` `/mine` `/fix <what is wrong>` `/eval <version>` `/plan` `/export`, and
+`/models` `/connect` `/trainer` `/agents` `/sessions` `/jobs` `/versions` `/help`. Add your own as
+Markdown in `.opentrain/commands/`.
 
-## Every recipe is a skill
-
-A recipe is a folder with a written playbook (`SKILL.md`) the engine reads and you can change. A goal
-pairs a data recipe with a training recipe. See `opentrain skill ls` and [`skills/`](skills/).
+## Recipes are skills
 
 | Goal | Data recipe | Training recipe | Proved by |
 | --- | --- | --- | --- |
-| `goal/speed` | `data/shortest` | `train/sft` | Time per task, at the same pass rate |
-| `goal/fix` | `data/expand`, from flagged failures | `train/sft` | The flagged tasks pass, nothing else regresses |
-| `goal/cost` | fewest tokens among verified passes | `train/sft` | Tokens per task, at the same pass rate |
+| `goal/speed` | `data/shortest` | `train/sft` | time per task, at the same pass rate |
+| `goal/fix` | `data/expand`, from flagged failures | `train/sft` | the flagged tasks pass, nothing regresses |
+| `goal/cost` | fewest tokens among verified passes | `train/sft` | tokens per task, at the same pass rate |
 
-## What plugs in
+## What is real today
 
-| Plug | Contract | Today |
-| --- | --- | --- |
-| Model provider (the engine's reasoning) | Chat with tool calls, usage reported | Headless Claude Code and Codex under your own login; any OpenAI-compatible API |
-| Trainer backend | Launch, stream logs, cancel, report cost as it accrues | Tinker, local (TRL/PEFT); Fireworks pending |
-| Base model | Chat and tool-call format, adapter type | Any model your backend supports |
-| Data source | Sessions in a known format | Claude Code first |
-| Serving | Deploy, switch versions without downtime | Tinker's OpenAI- and Anthropic-compatible endpoints; vLLM locally |
-
-## Your data
-
-Everything lives in `.opentrain/` beside the Trainfile: `sessions/`, `tasks/`, `heldout/` (evaluator
-only), `attempts/`, `data/`, `runs/`, `models/`, `jobs/`, `serving/`. Tasks are Harbor folders,
-training data is OpenAI chat JSONL, weights are standard LoRA adapters. `opentrain export` writes
-all of it in open formats for any other trainer.
+| Part | State |
+| --- | --- |
+| Server, event log, sessions, SSE, pairing | Tested |
+| Engine loop with Claude Code (your login) as the provider | Run live |
+| Anthropic and OpenAI-compatible providers | Written against the docs; tested with a scripted provider |
+| Tools, permissions, budget, jobs, sandbox, provenance gate | Tested |
+| Terminal app, `run`, `web`, `attach` | Tested (Textual pilot and live server) |
+| Mining tasks from Claude Code sessions | Runs on real logs; yield on real sessions is low (see docs/FINDINGS.md) |
+| Tinker training | Written against SDK 0.40; **no real training run yet** (needs `TINKER_API_KEY`) |
+| Local training (TRL + PEFT) | Written; untested here |
 
 ## Development
 
 ```bash
 uv sync --extra dev
-.venv/bin/pytest -q      # 142 tests, no network
-.venv/bin/ruff check .
+.venv/bin/pytest -q
 ```
 
-The plan this implements, with the roadmap from v0.1 bench to v0.7 merge: see
-[docs/PLAN.md](docs/PLAN.md). Results from running it on real sessions: [docs/FINDINGS.md](docs/FINDINGS.md).
+Plan and roadmap: [docs/PLAN.md](docs/PLAN.md). Results on real sessions: [docs/FINDINGS.md](docs/FINDINGS.md).

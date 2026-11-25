@@ -1,7 +1,4 @@
-import threading
 import time
-
-import pytest
 
 from opentrain.core.providers.scripted import ScriptedProvider
 from opentrain.core.tool import Tool, ToolError, schema

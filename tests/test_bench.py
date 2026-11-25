@@ -114,7 +114,7 @@ def test_cli_end_to_end(tmp_path, writer, repo, capsys):
     _commit_fix(repo)
     _coding_session(writer, tmp_path, repo)
     state = tmp_path / "state"
-    rc = main(["bench", "--sessions", str(tmp_path / "logs"), "--state", str(state), "--json"])
+    rc = main(["debug", "bench", "--sessions", str(tmp_path / "logs"), "--state", str(state), "--json"])
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["yield"]["verified_candidates"] == 1

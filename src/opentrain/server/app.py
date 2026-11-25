@@ -139,7 +139,8 @@ class Auth:
 
 
 def _directory(request: web.Request) -> str | None:
-    return request.query.get("directory") or request.headers.get("x-opentrain-directory")
+    return (request.query.get("directory") or request.headers.get("x-opentrain-directory")
+            or request.cookies.get("opentrain_dir"))
 
 
 def project_of(request: web.Request) -> Project:
@@ -168,8 +169,8 @@ async def guard(request: web.Request, handler: Callable[[web.Request], Awaitable
     host = (request.host or "").rsplit(":", 1)[0] if not (request.host or "").startswith("[") else request.host.split("]")[0] + "]"
     if app[LOCAL_ONLY] and host not in LOCAL_HOSTS:  # DNS rebinding: a page on evil.com resolving to us
         return ok({"error": {"type": "forbidden", "message": f"host {request.host!r} not allowed"}}, 403)
-    open_paths = request.path.startswith("/auth/connect/") or request.path in ("/", "/favicon.ico") \
-        or request.path.startswith("/static/")
+    open_paths = request.path.startswith("/auth/connect/") or request.path in ("/", "/favicon.ico", "/app.js",
+                                                                               "/app.css")
     auth: Auth = app[AUTH]
     if not open_paths and not (auth.basic_ok(request.headers.get("Authorization"))
                                or auth.token_ok(request.cookies.get(COOKIE))):

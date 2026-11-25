@@ -92,8 +92,8 @@ def test_the_shell_cannot_read_heldout_even_indirectly(live):
 
 
 def test_the_evaluator_process_reports_refusals(tmp_path):
-    from opentrain.core.tools.train import evaluate_in_process
     from opentrain.core.tool import ToolError
+    from opentrain.core.tools.train import evaluate_in_process
 
     state = tmp_path / ".opentrain"
     state.mkdir()

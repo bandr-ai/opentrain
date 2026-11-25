@@ -21,11 +21,10 @@ def attach_all(hub: Hub) -> None:
 
 def _engine(hub: Hub, p: Project) -> None:
     from ..core.agent import Agents
-    from ..core.runner import Runner
-    from ..core.tool import Registry
-
     from ..core.jobs import Jobs
     from ..core.questions import Questions
+    from ..core.runner import Runner
+    from ..core.tool import Registry
     from ..core.tools import register_all
 
     p.services["agents"] = Agents(p)
@@ -48,9 +47,10 @@ def _engine(hub: Hub, p: Project) -> None:
 
 
 def extra_routes() -> list[web.RouteTableDef]:
+    from .dashboard import routes as web_routes
     from .routes import routes
 
-    return [routes]
+    return [routes, web_routes]
 
 
 def configure_app(app: web.Application) -> None:
