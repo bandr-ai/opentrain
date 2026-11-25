@@ -186,8 +186,15 @@ class Jobs:
         self.store.update("job", job_id, patch)
         if st["state"] in TERMINAL:
             v = st.get("version")
-            self._notify(job_id, f"Checkpoint registered as {v} (not live). Next: eval_request {v}, then "
-                                 f"version_propose {v}." if v else None)
+            if v and j.get("dataset"):
+                from ..registry import Registry
+
+                Registry(self.project.state).update(v, dataset=j["dataset"])
+                note = (f"Checkpoint registered as {v} (not live), trained on dataset {j['dataset']}. Next: "
+                        f"dataset_eval {j['dataset']} with model {v}, then dataset_promote {v}.")
+            else:
+                note = f"Checkpoint registered as {v} (not live). Next: eval_request {v}, then version_propose {v}."
+            self._notify(job_id, note if v else None)
             return True
         return False
 

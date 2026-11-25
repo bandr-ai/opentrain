@@ -75,13 +75,17 @@ def project_status(project: Any) -> dict[str, Any]:
     cur = reg.current()
     ledger = Ledger(state, tf.budget)
     jobs = project.services["jobs"].list(active=True)
+    from ...datasets import Datasets
+    from .data import summarize
+
     return {
         "trainfile": str(tf_path) if tf_path else "none (defaults apply; the init tool writes one)",
-        "policy": {"goal": tf.goal, "budget": tf.budget.describe(), "promote": tf.promote, "trainer": tf.trainer,
+        "policy": {"goal": tf.objective or tf.goal, "budget": tf.budget.describe(), "promote": tf.promote, "trainer": tf.trainer,
                    "base_model": tf.base_model, "runtime": tf.runtime, "heldout": tf.heldout_fraction,
                    "eval_cap": tf.eval_cap, "provider": tf.provider},
         "budget": {"committed_usd": round(ledger.committed(), 4), "remaining_usd": round(ledger.remaining(), 4)},
-        "tasks": {"training": len(Store(state).ids()), "heldout": len(HeldoutStore(state).ids())},
+        "datasets": [summarize(state, n) for n in Datasets(state).names()],
+        "coding_tasks": {"training": len(Store(state).ids()), "heldout": len(HeldoutStore(state).ids())},
         "live": {"version": cur.version if cur else None, "pinned": live_version(state),
                  "base_model": cur.base_model if cur else tf.base_model},
         "versions": [{"version": v.version, "decision": v.decision, "base_model": v.base_model}
@@ -99,7 +103,7 @@ def _sandbox() -> str:
             "off": "OFF (OPENTRAIN_SANDBOX=off)", "none": "unavailable on this machine"}[kind()]
 
 
-def init(ctx: ToolContext, goal: str = "speed", budget: str = "$20 a week", trainer: str = "tinker",
+def init(ctx: ToolContext, goal: str = "better than the current model on my held-out examples", budget: str = "$20 a week", trainer: str = "tinker",
          base_model: str = "Qwen/Qwen3-8B", heldout: str = "30%") -> ToolResult:
     from ... import trainfile
 
@@ -424,7 +428,8 @@ def tools() -> list[Tool]:
         T("status", "Policy (Trainfile), budget left, task counts, what is live, recent versions and running jobs. "
           "Call this first.", S(), status),
         T("init", "Write a Trainfile for this project (only when none exists).",
-          S({"goal": {"type": "string", "enum": ["speed", "fix", "cost"]}, "budget": {"type": "string"},
+          S({"goal": {"type": "string", "description": "what the model should get better at, in plain words "
+                                                      "(or speed/fix/cost for coding-session work)"}, "budget": {"type": "string"},
              "trainer": {"type": "string"}, "base_model": {"type": "string"}, "heldout": {"type": "string"}}),
           init, permission=lambda a: [("write", "Trainfile")]),
         T("backends", "Trainer backends and whether each can run here.", S(), backends),

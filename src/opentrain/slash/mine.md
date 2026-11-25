@@ -1,5 +1,5 @@
 ---
-description: Turn my agent sessions into verified tasks
+description: Turn my coding-agent sessions into verified tasks (coding work only)
 agent: train
 ---
 Mine my agent sessions into verified tasks and split the held-out set by date. When it finishes,

@@ -318,9 +318,17 @@ class OpenTrainApp(App):
             total = used + left
             t.append(bar(used / total if total else 0, 24) + "\n", style="yellow" if left else "red")
             t.append(f"{money(used)} used · {money(left)} left\n", style="dim")
-        tasks = o.get("tasks") or {}
-        t.append("\nTASKS\n", style="bold dim")
-        t.append(f"{tasks.get('training', 0)} training · {tasks.get('heldout', 0)} held out\n")
+        t.append("\nDATA\n", style="bold dim")
+        dsets = o.get("datasets") or []
+        for d in dsets[:6]:
+            c = d.get("counts") or {}
+            t.append(f"{d['name']} ", style="bold")
+            t.append(f"{c.get('train', 0)} train · {c.get('heldout', 0)} held out\n", style="dim")
+        tasks = o.get("coding_tasks") or {}
+        if tasks.get("training") or tasks.get("heldout"):
+            t.append(f"coding tasks {tasks.get('training', 0)} · {tasks.get('heldout', 0)} held out\n", style="dim")
+        elif not dsets:
+            t.append("no datasets yet\n", style="dim")
         live = o.get("live") or {}
         t.append("\nLIVE\n", style="bold dim")
         t.append(f"{live.get('version') or 'nothing trained yet'}", style="green" if live.get("version") else "dim")

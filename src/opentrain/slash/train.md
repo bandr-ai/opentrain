@@ -1,7 +1,7 @@
 ---
-description: Run the Trainfile's goal end to end on this project
+description: Train a model for what I describe (or the Trainfile's goal), end to end
 agent: train
 ---
-Run this project's goal end to end, following the goal's recipe: check status, build tasks if
-there are too few, sample the teacher, build the training set, show me the plan with its cost and
-ask once, train, score the new version on held-out tasks and propose it to the gate. $ARGUMENTS
+Take this end to end: make sure we have a dataset for it and a way to grade answers, get a
+baseline score on held-out rows, show me the training plan with its cost and ask once, train,
+evaluate the new version on the same rows and put it through the gate. What I want: $ARGUMENTS

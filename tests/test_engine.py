@@ -190,7 +190,7 @@ def test_cli_surface_parses(tmp_path, capsys):
     assert main(["debug", "init", "--state", str(tmp_path)]) == 0
     assert (tmp_path / "Trainfile").exists()
     assert main(["debug", "status", "--state", str(tmp_path)]) == 0
-    assert "goal/speed" in capsys.readouterr().out
+    assert "goal/custom" in capsys.readouterr().out
     assert main(["debug", "log", "--state", str(tmp_path)]) == 0
     assert main(["debug", "skill", "ls", "--state", str(tmp_path)]) == 0
     assert "cl/mine" in capsys.readouterr().out

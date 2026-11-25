@@ -117,7 +117,8 @@ def test_subagent_runs_in_a_child_session(live):
 def test_status_init_and_versions(live):
     t, _ = call(live, "st1", "status", {})
     st = json.loads(t["output"])
-    assert st["trainfile"].startswith("none") and st["tasks"] == {"training": 0, "heldout": 0}
+    assert st["trainfile"].startswith("none") and st["coding_tasks"] == {"training": 0, "heldout": 0}
+    assert st["datasets"] == []
     t, _ = call(live, "st2", "init", {"goal": "cost", "budget": "$5 a week", "heldout": "25%"})
     assert t["state"] == "completed"
     text = (live.proj / "Trainfile").read_text()

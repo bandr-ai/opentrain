@@ -33,6 +33,8 @@ class Version:
     scores: dict[str, Any]
     decision: str
     created_at: str
+    dataset: str | None = None
+    """The dataset it was trained on, when it was trained on one (else it came from mined tasks)."""
 
     @property
     def model_name(self) -> str:
