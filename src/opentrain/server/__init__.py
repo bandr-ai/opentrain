@@ -43,6 +43,9 @@ async def _serve(host: str, port: int, password: str, register: bool, default: P
     sock = site._server.sockets[0]  # type: ignore[union-attr]
     real_port = sock.getsockname()[1]
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{real_port}"
+    from .app import HUB
+
+    app[HUB].url = url
     if register:
         service.write_registration(service.Registration(url=url, pid=os.getpid(), version=__version__,
                                                         password=password))

@@ -32,6 +32,7 @@ class LiveServer:
         self.loop.run_until_complete(site.start())
         self.port = site._server.sockets[0].getsockname()[1]
         self.url = f"http://127.0.0.1:{self.port}"
+        self.app[HUB].url = self.url
         self.ready.set()
         self.loop.run_forever()
 

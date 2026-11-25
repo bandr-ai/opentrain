@@ -4095,6 +4095,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
@@ -4117,6 +4120,7 @@ tinker = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.0" },
     { name = "datasets", marker = "extra == 'local'", specifier = ">=4.7" },
     { name = "peft", marker = "extra == 'local'", specifier = ">=0.13" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
@@ -4129,7 +4133,7 @@ requires-dist = [
     { name = "trl", marker = "extra == 'local'", specifier = ">=1.18" },
     { name = "vllm", marker = "extra == 'serve-local'" },
 ]
-provides-extras = ["tinker", "local", "serve-local", "dev"]
+provides-extras = ["anthropic", "tinker", "local", "serve-local", "dev"]
 
 [[package]]
 name = "orjson"

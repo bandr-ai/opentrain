@@ -51,6 +51,8 @@ class Hub:
         self.attachers: list[Attacher] = []
         self.loop: asyncio.AbstractEventLoop | None = None
         self.subscribers: set[asyncio.Queue] = set()
+        self.url = ""  # set once the server is listening (agent providers call back here)
+        self.password = ""
 
     def project(self, directory: str | Path | None = None) -> Project:
         key = str(Path(directory or self.default).expanduser().resolve())
@@ -58,6 +60,7 @@ class Hub:
             if not Path(key).is_dir():
                 raise ApiError(404, f"no such directory: {key}", "not_found")
             p = Project(key)
+            p.services["hub"] = self
             p.store.subscribe(self.broadcast)
             self.projects[key] = p
             for attach in self.attachers:
@@ -81,8 +84,8 @@ class Hub:
 
     def close(self) -> None:
         for p in self.projects.values():
-            for svc in p.services.values():
-                if hasattr(svc, "close"):
+            for name, svc in p.services.items():
+                if name != "hub" and hasattr(svc, "close"):
                     try:
                         svc.close()
                     except Exception:
@@ -320,6 +323,7 @@ def make_app(*, password: str, hub: Hub | None = None, local_only: bool = True,
 
     app = web.Application(middlewares=[guard], client_max_size=32 * 1024 * 1024)
     app[HUB] = hub or Hub()
+    app[HUB].password = password
     app[AUTH] = Auth(password)
     app[LOCAL_ONLY] = local_only
     app[PID] = os.getpid()
