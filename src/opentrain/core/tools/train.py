@@ -82,9 +82,17 @@ def status(ctx: ToolContext) -> Any:
                  "base_model": cur.base_model if cur else tf.base_model},
         "versions": [{"version": v.version, "decision": v.decision, "base_model": v.base_model}
                      for v in reg.versions()[-5:]],
+        "sandbox": _sandbox(),
         "jobs_running": [{"id": j["id"], "kind": j["kind"], "title": j["title"], "progress": j.get("progress"),
                           "detail": j.get("detail")} for j in jobs],
     }
+
+
+def _sandbox() -> str:
+    from ..sandbox import kind
+
+    return {"seatbelt": "on (macOS sandbox-exec)", "bwrap": "on (bubblewrap)",
+            "off": "OFF (OPENTRAIN_SANDBOX=off)", "none": "unavailable on this machine"}[kind()]
 
 
 def init(ctx: ToolContext, goal: str = "speed", budget: str = "$20 a week", trainer: str = "tinker",
@@ -307,12 +315,46 @@ def job_stop(ctx: ToolContext, job_id: str) -> Any:
 # ---------------------------------------------------------------------- evals and versions
 
 
+def evaluate_in_process(state: Path, version: str, run_id: str | None, job: JobContext | None = None) -> Any:
+    """Run the evaluator as its own process; only scores come back."""
+    import json
+    import subprocess
+    import sys
+
+    argv = [sys.executable, "-m", "opentrain.core.evaluate", "--state", str(state), "--version", version]
+    if run_id:
+        argv += ["--run", run_id]
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    while True:
+        try:
+            out, err = proc.communicate(timeout=2)
+            break
+        except subprocess.TimeoutExpired:
+            if job is not None and job.cancel_event.is_set():
+                proc.kill()
+                proc.communicate()
+                job.check()
+    if job is not None and err:
+        for line in err.splitlines()[-200:]:
+            job.log(line)
+    try:
+        result = json.loads(out.strip().splitlines()[-1]) if out.strip() else {}
+    except ValueError:
+        result = {}
+    if proc.returncode == 2 and result.get("error"):
+        raise ToolError(result["error"])
+    if proc.returncode != 0 or not result:
+        raise ToolError(f"the evaluator failed (exit {proc.returncode}): {(err or '').strip()[-400:]}")
+    return result
+
+
 def eval_request(ctx: ToolContext, version: str) -> ToolResult:
     srv = _server(ctx)
+    state, run_id = ctx.project.state, srv.run.run_id
 
     def work(job: JobContext) -> Any:
-        job.progress(None, f"scoring {version} on held-out tasks")
-        return _refuse(srv.t_eval_request)(version)
+        job.progress(None, f"scoring {version} on held-out tasks (evaluator process)")
+        return evaluate_in_process(state, version, run_id, job)
 
     def summary(r: Any) -> str:
         failed = [t["task_id"] for t in r.get("per_task", []) if not t["passed"]]
@@ -325,7 +367,18 @@ def eval_request(ctx: ToolContext, version: str) -> ToolResult:
 
 
 def version_propose(ctx: ToolContext, version: str) -> Any:
-    return _refuse(_server(ctx).t_version_propose)(version)
+    from ...registry import Registry
+    from ..integrity import provenance
+
+    srv = _server(ctx)
+    flags = provenance(ctx.project.state, version, srv.tf.base_model, ctx.project.store)
+    if flags:
+        Registry(ctx.project.state).record_gate(version, "rejected: " + "; ".join(flags), {"provenance": flags})
+        srv.run.add("gate", promote=False, version=version, reasons=flags, regressions=[], fixed=[],
+                    summary={"provenance": flags})
+        return {"promoted": False, "reasons": flags, "note": "integrity checks failed; the version is scored as "
+                                                             "the baseline and cannot be promoted"}
+    return _refuse(srv.t_version_propose)(version)
 
 
 def versions(ctx: ToolContext) -> Any:

@@ -31,7 +31,9 @@ async def _shell(ctx: ToolContext, command: str, timeout: float = 120, descripti
     if any(f"{ctx.project.state.name}/{s}" in command for s in ("heldout", "opentrain.db")):
         raise ToolError("held-out tasks and the run record are sealed; use the train tools")
     timeout = max(1.0, min(float(timeout), 3600.0))
-    proc = await asyncio.create_subprocess_exec("bash", "-lc", command, cwd=str(cwd),
+    from ..sandbox import wrap
+
+    proc = await asyncio.create_subprocess_exec(*wrap(["bash", "-lc", command]), cwd=str(cwd),
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
                                                 stdin=asyncio.subprocess.DEVNULL, start_new_session=True,
                                                 env={**os.environ, "OPENTRAIN_AGENT": ctx.agent.name})

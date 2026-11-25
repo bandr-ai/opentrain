@@ -208,9 +208,15 @@ def parse_events(lines: list[str]) -> HeadlessResult:
 
 def run_headless(argv: list[str], cwd: Path, timeout: float) -> HeadlessResult:
     """Run one headless turn to completion (or kill its whole process group at ``timeout``)."""
+    import shutil
+
     start = time.monotonic()
+    if shutil.which(argv[0]) is None:
+        return HeadlessResult("", None, 0, None, error=f"{argv[0]} is not installed or not on PATH", seconds=0.0)
     try:
-        proc = subprocess.Popen(argv, cwd=cwd, text=True, errors="replace", stdin=subprocess.DEVNULL,
+        from ..core.sandbox import wrap
+
+        proc = subprocess.Popen(wrap(argv), cwd=cwd, text=True, errors="replace", stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     except FileNotFoundError:
         return HeadlessResult("", None, 0, None, error=f"{argv[0]} is not installed or not on PATH",

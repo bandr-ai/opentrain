@@ -24,6 +24,9 @@ class Project:
         self.directory = Path(directory).expanduser().resolve()
         self.state = self.directory / ".opentrain"
         self.store = Store(self.state, location=str(self.directory))
+        from . import sandbox
+
+        sandbox.register(self.state)
         self.services: dict[str, Any] = {}  # filled by the server: runner, permissions, jobs, ...
 
     @property
