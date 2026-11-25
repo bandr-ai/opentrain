@@ -7,8 +7,9 @@ Trainfile: a tool cannot spend past the budget, ask the evaluator more often tha
 held-out content, or promote without the gate.
 
 Tools are scoped by role. The trainer never gets a tool that reads held-out tasks; the evaluator
-never gets one that trains. (Both roles still have a shell, so a separate OS user or container
-for the held-out store is what makes this a wall; see ``state.py``.)
+never gets one that trains. In agent mode the trainer's CLI also gets no shell and no file writes,
+and reads under ``.opentrain`` are denied (``engine.agent``). Against a process running as the same
+user with a shell, only a separate OS account or container for the held-out store is a true wall.
 
 Protocol: JSON-RPC 2.0, one message per line, MCP methods ``initialize``, ``tools/list``,
 ``tools/call`` and ``ping``. No dependencies.
@@ -172,6 +173,11 @@ class Server:
         data = self.state / "data" / "train.jsonl"
         if not data.exists() or not data.read_text().strip():
             raise ToolError("no training set; run data_build first")
+        manifest = self.state / "data" / "manifest.json"
+        used = {t["task_id"] for t in json.loads(manifest.read_text()).get("tasks", [])} if manifest.exists() else set()
+        leaked = used & set(HeldoutStore(self.state).ids())
+        if leaked or not manifest.exists():
+            raise ToolError("the training set is stale (built before the held-out split changed); run data_build again")
         backend = get_backend(self.tf.trainer, self.state)
         ok, why = backend.available()
         if not ok:
@@ -202,6 +208,9 @@ class Server:
         st = get_backend(launched["backend"], self.state).status(job_id)
         out: dict[str, Any] = {"state": st.state, "progress": st.progress, "cost_usd": st.cost_usd,
                                "detail": st.detail, "logs": st.logs[-10:]}
+        if not st.done and st.cost_usd > launched["estimate_usd"] + self.ledger.remaining(self.run.run_id):
+            get_backend(launched["backend"], self.state).cancel(job_id)
+            out["cancelled"] = "over budget"
         if st.done and not any(e["kind"] == "job" and e["data"].get("job_id") == job_id
                                and e["data"].get("state") in ("succeeded", "failed", "cancelled")
                                for e in self.run.events()):
@@ -222,13 +231,16 @@ class Server:
         return {"cancelling": job_id}
 
     def _scores(self, version: str) -> list[gate_mod.Score]:
-        from .engine import specialist_runner
+        from .engine import baseline_name, specialist_runner
+        from .evaluator import EvalBroken
 
         reg = Registry(self.state)
+        if version == baseline_name(self.tf, reg):
+            raise ToolError(f"{version} is the live version; its scores are the baseline and are not re-requested here")
         ev = Evaluator(self.state, self.tf.eval_cap)
         try:
             scores = ev.request(specialist_runner(reg.get(version)), f"opentrain/{version}", self.run)
-        except EvalCapReached as exc:
+        except (EvalCapReached, EvalBroken) as exc:
             raise ToolError(str(exc)) from None
         ev.save_scores(version, scores)
         return scores
@@ -242,19 +254,31 @@ class Server:
         from .certify import lint
 
         reg = Registry(self.state)
+        if reg.get(version).decision in ("promoted", "reverted"):
+            raise ToolError(f"{version} was already {reg.get(version).decision}; propose a new version")
         ev = Evaluator(self.state, self.tf.eval_cap)
         cand = ev.scores_for(version)
         if cand is None:
             raise ToolError(f"{version} has no held-out scores; call eval_request first")
         from .engine import baseline_name
 
-        cur_scores = ev.scores_for(baseline_name(self.tf, reg))
-        if cur_scores is None:
-            raise ToolError("no baseline scores to compare against; run `opentrain eval --baseline` first")
+        name = baseline_name(self.tf, reg)
+        cur_scores = ev.scores_for(name)
+        if cur_scores is None or {s.task_id for s in cur_scores} != set(HeldoutStore(self.state).ids()):
+            # The bar is re-measured here, server-side and outside the trainer's eval cap, whenever
+            # the held-out set has moved since it was scored.
+            from .engine import _baseline_runner, specialist_runner
+            from .evaluator import EvalBroken
+
+            cur = reg.current()
+            try:
+                cur_scores = ev.baseline(specialist_runner(cur) if cur else _baseline_runner(self.tf), name)
+            except EvalBroken as exc:
+                raise ToolError(f"could not score the baseline {name}: {exc}") from None
         broken = [r["task_id"] for r in lint(self.state, only_heldout=True)["broken"]]
         d = gate_mod.decide(cur_scores, cand, self.tf.goal, allow_regressions=self.tf.allow_regressions,
                             broken_verifiers=broken)
-        reg.update(version, scores={**summarise(cand), "per_task": [asdict(s) for s in cand]}, decision=d.explain())
+        reg.record_gate(version, d.explain(), {**summarise(cand), "per_task": [asdict(s) for s in cand]})
         self.run.add("gate", promote=d.promote, version=version, reasons=d.reasons,
                      regressions=d.regressions, fixed=d.fixed, summary=d.summary)
         if d.promote:

@@ -102,10 +102,25 @@ class Registry:
                 return Version(**v)
         raise RegistryError(f"no version {version!r}")
 
+    def record_gate(self, version: str, decision: str, scores: dict[str, Any]) -> Version:
+        """Store a gate result. A version already promoted or reverted keeps that state: re-gating it
+        must not erase the history ``revert`` walks."""
+        v = self.get(version)
+        fields: dict[str, Any] = {"scores": scores}
+        if v.decision not in ("promoted", "reverted"):
+            fields["decision"] = decision
+        return self.update(version, **fields)
+
+    def _clear_pin(self) -> None:
+        # A promotion or a rollback is a decision about what is live; a manual serving pin from
+        # before it must not keep serving something else.
+        (self.path.parent.parent / "serving" / "live.json").unlink(missing_ok=True)
+
     def promote(self, version: str, why: str) -> Version:
         self.get(version)
         self.update(version, decision="promoted")
         self._set_current(version, why)
+        self._clear_pin()
         return self.get(version)
 
     def revert(self, why: str = "manual revert") -> Version | None:
@@ -122,4 +137,5 @@ class Registry:
                 break
         self.update(cur, decision="reverted")
         self._set_current(previous, why)
+        self._clear_pin()
         return self.get(previous) if previous else None

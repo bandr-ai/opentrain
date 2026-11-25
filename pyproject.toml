@@ -3,9 +3,11 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "opentrain"
+# The command and the import are both `opentrain`; the PyPI names `opentrain` and `opentrain-ai`
+# belong to unrelated projects (as `opencode` ships as `opencode-ai`).
+name = "opentrain-cli"
 version = "0.2.0.dev0"
-description = "The open harness for training models. First feature: a personal coding model from your agent sessions."
+description = "The open source post-training harness. Turn your agent sessions into a model that does your work."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
@@ -33,7 +35,9 @@ opentrain = "opentrain.cli:main"
 ot = "opentrain.cli:main"
 
 [project.urls]
-Source = "https://github.com/bandr-ai/open-train"
+Homepage = "https://github.com/bandr-ai/opentrain"
+Source = "https://github.com/bandr-ai/opentrain"
+Issues = "https://github.com/bandr-ai/opentrain/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/opentrain"]

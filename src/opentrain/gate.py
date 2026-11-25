@@ -68,6 +68,12 @@ def decide(
     missing = sorted(set(cur) - set(cand))
     if missing:
         return Decision(False, [f"candidate was not scored on {len(missing)} held-out tasks the current version was"])
+    unseen = sorted(set(cand) - set(cur))
+    if cur and unseen:
+        # The baseline predates these held-out tasks, so nothing says the current version would
+        # fail them. Comparing only the overlap would let a candidate fail every new task.
+        return Decision(False, [f"the baseline was scored before {len(unseen)} of these held-out tasks existed; "
+                                "re-score the current version first"], summary={"unscored_in_baseline": unseen})
 
     shared = sorted(set(cur) & set(cand))
     regressions = [t for t in shared if cur[t].passed and not cand[t].passed]
@@ -100,8 +106,15 @@ def decide(
     both = [t for t in shared if cur[t].passed and cand[t].passed]
     if goal in ("speed", "cost"):
         attr = "seconds" if goal == "speed" else "tokens"
-        a = _median([getattr(cur[t], attr) for t in both if getattr(cur[t], attr) is not None])
-        b = _median([getattr(cand[t], attr) for t in both if getattr(cand[t], attr) is not None])
+        def measured(s: Score) -> float | None:
+            v = getattr(s, attr)
+            return None if v is None or (attr == "tokens" and v <= 0) else v  # 0 tokens = not reported
+
+        # Only tasks measured on both sides, so the two medians describe the same work.
+        pairs = [(measured(cur[t]), measured(cand[t])) for t in both]
+        pairs = [(x, y) for x, y in pairs if x is not None and y is not None]
+        a = _median([x for x, _ in pairs])
+        b = _median([y for _, y in pairs])
         summary[f"median_{attr}"] = b
         summary[f"current_median_{attr}"] = a
         if a is None or b is None:
@@ -117,7 +130,7 @@ def decide(
             reasons.append(f"not better on {goal}")
     elif goal == "fix":
         targets = flagged or []
-        still = [t for t in targets if t in cand and not cand[t].passed]
+        still = [t for t in targets if t not in cand or not cand[t].passed]  # unscored counts as failing
         if not targets:
             ok = False
             reasons.append("fix goal with no flagged tasks")

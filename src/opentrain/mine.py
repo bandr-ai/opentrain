@@ -415,6 +415,13 @@ def mine_one(v: YieldVerdict, state: Path, timeout: float = 900) -> dict[str, An
     tid = task_id(v)
     if tid in HeldoutStore(state) or tid in Store(state):
         return {"outcome": "kept", "task_id": tid, "reason": "already in the store"}
+    # Ids can change when a worktree vanishes and the session resolves to the main clone; the
+    # session cannot, so a session already mined is never mined again under a new id.
+    sid = v.session.session_id
+    for store in (HeldoutStore(state), Store(state)):
+        for existing in store:
+            if existing.source_session == sid:
+                return {"outcome": "kept", "task_id": existing.task_id, "reason": "session already mined"}
     with tempfile.TemporaryDirectory(prefix="ot-mine-") as tmp:
         folder = mine(v, Path(tmp))
         task = read_task(folder)

@@ -12,7 +12,9 @@ task folder is the isolated path (``opentrain lint --harbor``).
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -108,9 +110,50 @@ def link_env(repo: Path, ws: Path) -> list[str]:
                                      capture_output=True).returncode == 0
             if not tracked:
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.symlink_to(src, target_is_directory=True)
+                dest.symlink_to(env_cache(src), target_is_directory=True)
                 linked.append(rel)
     return linked
+
+
+ENV_CACHE = Path(tempfile.gettempdir()) / "opentrain-envcache"
+
+
+def _clone_tree(src: Path, dest: Path) -> bool:
+    """Copy-on-write clone (APFS clonefile, or reflink/hardlinks on Linux): fast, and a write or
+    delete in the clone never reaches the source."""
+    import platform
+
+    cmds = ([["cp", "-c", "-R", str(src), str(dest)]] if platform.system() == "Darwin"
+            else [["cp", "-a", "--reflink=always", str(src), str(dest)], ["cp", "-al", str(src), str(dest)]])
+    for cmd in cmds:
+        if subprocess.run(cmd, capture_output=True).returncode == 0:
+            return True
+        shutil.rmtree(dest, ignore_errors=True)
+    return False
+
+
+def env_cache(src: Path) -> Path:
+    """A private clone of a dependency folder, made once and refreshed when the source changes.
+
+    Attempts get this clone, so ``rm -rf node_modules`` or a broken install in an attempt damages
+    the cache, never the user's own folder. Console scripts in a Python venv carry absolute
+    shebangs to the original interpreter, so ``.venv/bin/pip install`` still installs into the
+    user's venv: the agents' prompts say not to install packages. If no clone can be made the
+    source is linked directly, as before.
+    """
+    key = hashlib.sha256(str(src.resolve()).encode()).hexdigest()[:16]
+    dest = ENV_CACHE / key / src.name
+    stamp = ENV_CACHE / key / ".source-mtime"
+    mtime = str(src.stat().st_mtime_ns)
+    with _git_lock:
+        if dest.is_dir() and stamp.exists() and stamp.read_text() == mtime:
+            return dest
+        shutil.rmtree(dest, ignore_errors=True)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if not _clone_tree(src, dest):
+            return src
+        stamp.write_text(mtime)
+    return dest
 
 
 def diff(workspace: Path, exclude: tuple[str, ...] = ()) -> str:
@@ -137,15 +180,36 @@ def reference_patch(task: Task) -> str:
     return _git(task.repo, *args)
 
 
+TEST_CONFIG = re.compile(
+    r"(^|/)(conftest\.py|pytest\.ini|tox\.ini|setup\.cfg|\.coveragerc|noxfile\.py|\.rspec|phpunit\.xml(\.dist)?"
+    r"|(jest|vitest|playwright|karma|cypress)\.config\.[cm]?[jt]s|vitest\.workspace\.[jt]s|\.mocharc\.[a-z]+)$"
+)
+"""Files that decide how tests run. An attempt that edits one could make every test pass without
+doing the work, so they are always put back as they stood at the reference before grading.
+Known gap: test settings inside ``pyproject.toml`` or ``package.json`` are not restored, because
+real solutions legitimately change those files."""
+
+
+def _changed_paths(workspace: Path) -> list[str]:
+    out = subprocess.run(["git", "-C", str(workspace), "status", "--porcelain", "-uall", "--no-renames"],
+                         capture_output=True, text=True)
+    return [line[3:].strip().strip('"') for line in out.stdout.splitlines() if len(line) > 3]
+
+
 def overlay_tests(task: Task, workspace: Path) -> None:
-    """Put the task's test files in place, exactly as they stood at the reference commit."""
-    for rel in task.test_files:
+    """Put the task's test files in place, exactly as they stood at the reference commit, and undo
+    any change the attempt made to other test files or to test configuration."""
+    from .bench.gitstate import TEST_FILE
+
+    protected = [p for p in _changed_paths(workspace)
+                 if (TEST_FILE.search(p) or TEST_CONFIG.search(p)) and p not in task.test_files]
+    for rel in [*task.test_files, *protected]:
         dest = workspace / rel
         content = subprocess.run(["git", "-C", task.repo, "show", f"{task.reference_commit}:{rel}"],
                                  capture_output=True)
         if content.returncode != 0 or not content.stdout.strip():  # deleted, or emptied, at the reference
-            if dest.exists():
-                dest.unlink()  # deleted at the reference
+            if dest.is_file() or dest.is_symlink():
+                dest.unlink()  # deleted (or never present) at the reference
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(content.stdout)

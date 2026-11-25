@@ -145,7 +145,7 @@ def _block(monkeypatch, *mods):
 def test_tinker_unavailable_without_sdk_or_key(tmp_path, monkeypatch):
     _block(monkeypatch, "tinker")
     ok, why = get_backend("tinker", tmp_path).available()
-    assert not ok and "opentrain[tinker]" in why
+    assert not ok and "opentrain-cli[tinker]" in why
     monkeypatch.setattr(tk, "missing_modules", lambda *names: [])
     monkeypatch.delenv("TINKER_API_KEY", raising=False)
     ok, why = get_backend("tinker", tmp_path).available()
@@ -162,7 +162,7 @@ def test_local_unavailable_without_torch(tmp_path, monkeypatch):
     _block(monkeypatch, "torch")
     local = get_backend("local", tmp_path)
     ok, why = local.available()
-    assert not ok and "torch" in why and "opentrain[local]" in why
+    assert not ok and "torch" in why and "opentrain-cli[local]" in why
     assert local.estimate(spec(Path("x"))) == 0.0
 
 
@@ -297,14 +297,18 @@ def _proxy(state, handoff=None):
     return server, f"http://127.0.0.1:{server.server_address[1]}"
 
 
-def _post(url, body):
+def _post(url, body, headers=None):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json", **(headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.status, dict(r.headers), r.read()
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers), e.read()
+
+
+def _tok(state):
+    return {"X-OpenTrain-Token": (Path(state) / "serving" / "token").read_text()}
 
 
 def test_serve_maps_names_and_hot_switches(served):
@@ -322,7 +326,7 @@ def test_serve_maps_names_and_hot_switches(served):
         assert a.seen[-1]["body"]["model"] == "model-a" and a.seen[-1]["auth"] == "Bearer sekret"
         assert headers["X-OpenTrain-Version"] == "v1"
 
-        status, _, body = _post(f"{base}/v1/opentrain/switch", {"version": "v2"})
+        status, _, body = _post(f"{base}/v1/opentrain/switch", {"version": "v2"}, _tok(state))
         assert status == 200 and json.loads(body)["version"] == "v2" and live_version(state) == "v2"
         _, headers, body = _post(f"{base}/v1/chat/completions", msg)
         assert "from b" in body.decode() and headers["X-OpenTrain-Version"] == "v2"
@@ -336,7 +340,18 @@ def test_serve_maps_names_and_hot_switches(served):
         assert "from a" in body.decode()
 
         assert _post(f"{base}/v1/chat/completions", {**msg, "model": "gpt-x"})[0] == 404
-        assert _post(f"{base}/v1/opentrain/switch", {"version": "v9"})[0] == 404
+        assert _post(f"{base}/v1/opentrain/switch", {"version": "v9"}, _tok(state))[0] == 404
+        # Refusals: no token, wrong Host (DNS rebinding), a non-JSON cross-site POST.
+        assert _post(f"{base}/v1/opentrain/switch", {"version": "v2"})[0] == 403
+        assert _post(f"{base}/v1/chat/completions", msg, {"Host": "evil.example:80"})[0] == 403
+        plain = urllib.request.Request(f"{base}/v1/opentrain/switch", data=b'{"version":"v2"}', method="POST",
+                                       headers={"Content-Type": "text/plain"})
+        try:
+            urllib.request.urlopen(plain, timeout=5)
+            raise AssertionError("text/plain POST was accepted")
+        except urllib.error.HTTPError as e:
+            assert e.code == 415
+        assert live_version(state) == "v1"
     finally:
         server.shutdown()
         server.server_close()

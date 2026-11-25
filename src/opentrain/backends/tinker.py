@@ -195,12 +195,12 @@ class TinkerBackend:
 
     def available(self) -> tuple[bool, str]:
         if missing_modules("tinker"):
-            return False, "the tinker SDK is not installed: pip install 'opentrain[tinker]'"
+            return False, "the tinker SDK is not installed: pip install 'opentrain-cli[tinker]'"
         if not os.environ.get(KEY_ENV):
             return False, f"set {KEY_ENV} (create a key at https://tinker.thinkingmachines.ai/)"
         if missing_modules("tinker_cookbook"):
             return True, ("ready; tinker-cookbook not installed, so chat templates come from the HF "
-                          "tokenizer (pip install 'opentrain[tinker]' for the cookbook renderers)")
+                          "tokenizer (pip install 'opentrain-cli[tinker]' for the cookbook renderers)")
         return True, "ready (tinker SDK, tinker-cookbook renderers, key from TINKER_API_KEY)"
 
     def estimate(self, spec: TrainSpec) -> float:

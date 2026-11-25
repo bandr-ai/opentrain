@@ -233,6 +233,13 @@ def test_export_leaves_heldout_out_by_default(tmp_path, writer, repo):
     assert HeldoutStore(state).ids() == [held_id]
     (state / "data").mkdir()
     (state / "data" / "train.jsonl").write_text('{"messages": []}\n{"messages": []}\n')
+    (state / "data" / "manifest.json").write_text(json.dumps({"tasks": [{"task_id": read_task(first).task_id}]}))
+
+    stale = tmp_path / "stale-export"
+    (state / "data" / "manifest.json").write_text(json.dumps({"tasks": [{"task_id": held_id}]}))
+    assert export(state, stale)["counts"]["train_skipped"].startswith("stale")
+    assert not (stale / "train.jsonl").exists()
+    (state / "data" / "manifest.json").write_text(json.dumps({"tasks": [{"task_id": read_task(first).task_id}]}))
 
     out = tmp_path / "export"
     m = export(state, out)

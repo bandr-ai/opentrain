@@ -150,3 +150,17 @@ def test_wait_for_background_work_is_not_model_time(tmp_path, writer):
     )
     s = load_session(w.write(tmp_path / "p" / "s.jsonl"))
     assert s.seconds("model") == 10 and s.seconds("tool") == 600
+
+
+def test_interrupt_does_not_turn_work_into_human_time(tmp_path, writer):
+    w = (
+        writer("/r").prompt(0, "go").call(5, "a", command="sleep 100").result(65, "a")
+        .prompt(65, "[Request interrupted by user]").prompt(70, "do it differently").say(75, "ok")
+    )
+    s = load_session(w.write(tmp_path / "p" / "s.jsonl"))
+    assert s.seconds("tool") == 60 and s.seconds("human") == 5 and s.human_turns == 2
+
+
+def test_slash_command_arguments_are_kept():
+    text = "<command-name>/fix</command-name><command-message>fix</command-message><command-args>the login loop</command-args>"
+    assert clean_prompt(text) == "the login loop"

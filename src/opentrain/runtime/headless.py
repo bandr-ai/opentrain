@@ -37,7 +37,8 @@ from ..plugs import Attempt
 Kind = Literal["claude", "codex"]
 
 ATTEMPT_NOTE = ("You are working non-interactively: no one will answer questions. Make the requested change "
-                "in the current repository's working tree. Do not commit.")
+                "in the current repository's working tree. Do not commit, do not install or remove "
+                "dependencies, and do not edit test configuration.")
 CLAUDE_ATTEMPT_TOOLS = ("Bash", "Read", "Write", "Edit", "Glob", "Grep")
 TEACHER_TOOLS = ("Bash", "Read", "Write", "Edit")
 """A teacher's transcript becomes the specialist's training data, so the teacher gets exactly the

@@ -37,8 +37,8 @@ Make the change the user asks for by editing files in the working tree.
 Tools: bash runs a shell command in the repository; read_file, write_file and edit_file work on
 files by path relative to the repository root. Use them to look before you change anything, make
 the smallest change that does the job, and run the relevant tests when the repository has them.
-Do not commit, and do not ask questions: no one will answer. When the change is done, call finish
-with a one-line summary."""
+Do not commit, do not install or remove dependencies, and do not edit test configuration. Do not ask
+questions: no one will answer. When the change is done, call finish with a one-line summary."""
 
 TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {

@@ -11,6 +11,8 @@ with ``usd=0`` and the vendor's own limits apply (plan: "How the limits are enfo
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -68,9 +70,23 @@ class Ledger:
     def remaining(self, run_id: str | None = None) -> float:
         return round(self.budget.dollars - self.committed(run_id), 6)
 
+    @contextlib.contextmanager
+    def _locked(self):
+        """The engine and the MCP server may reserve at once; the check and the append are one step."""
+        with open(self.path.with_suffix(".lock"), "a") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
     def reserve(self, usd: float, what: str, run_id: str | None = None) -> str:
         if usd < 0:
             raise ValueError("a reservation cannot be negative")
+        with self._locked():
+            return self._reserve(usd, what, run_id)
+
+    def _reserve(self, usd: float, what: str, run_id: str | None) -> str:
         left = self.remaining(run_id)
         if usd > left + 1e-9:
             raise BudgetExceeded(

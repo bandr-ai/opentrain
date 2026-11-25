@@ -221,9 +221,28 @@ def split_store(state: Path, fraction: float, cutoff: str | None = None) -> dict
             when = when.replace(tzinfo=timezone.utc)
         items.append((t.task_id, when))
     sp = split_by_date(items, fraction, datetime.fromisoformat(cutoff) if cutoff else None)
-    moved = 0
+    used = used_for_training(state)
+    moved = frozen = 0
     for tid in sp.heldout:
         if tid in train:
+            if tid in used:
+                frozen += 1  # a model has already seen it: it can never test anything again
+                continue
             train.move_to(tid, held)
             moved += 1
-    return {"train": len(train.ids()), "heldout": len(held.ids()), "moved": moved, "cutoff": str(sp.cutoff)}
+    out = {"train": len(train.ids()), "heldout": len(held.ids()), "moved": moved, "cutoff": str(sp.cutoff)}
+    if frozen:
+        out["kept_in_training"] = frozen
+    return out
+
+
+def used_for_training(state: Path) -> set[str]:
+    """Task ids a model has attempted or been trained on: they stay training tasks for good."""
+    used: set[str] = set()
+    attempts = state / "attempts"
+    if attempts.is_dir():
+        used |= {p.name for p in attempts.iterdir() if p.is_dir()}
+    manifest = state / "data" / "manifest.json"
+    if manifest.exists():
+        used |= {t["task_id"] for t in json.loads(manifest.read_text()).get("tasks", [])}
+    return used

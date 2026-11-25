@@ -265,9 +265,25 @@ class Proxy:
             fh.write(line + "\n")
 
 
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "opentrain-serve"
     proxy: Proxy  # set on the subclass by make_server
+    token: str = ""  # set on the subclass by make_server; required to switch versions over HTTP
+
+    def _local_only(self) -> bool:
+        """Refuse requests whose Host is not this machine: a web page using DNS rebinding would
+        otherwise reach the proxy (and the provider keys it adds) through the browser."""
+        header = self.headers.get("Host") or ""
+        host = header.split("]")[0] + "]" if header.startswith("[") else header.rsplit(":", 1)[0]
+        if self.server.server_address[0] not in ("127.0.0.1", "::1", "localhost"):
+            return True  # bound to a public interface on purpose: the operator owns that choice
+        if host in _LOCAL_HOSTS:
+            return True
+        self._error(403, "requests must address this machine (Host: 127.0.0.1 or localhost)")
+        return False
 
     def log_message(self, fmt, *args):  # the request log is requests.jsonl, not stderr
         pass
@@ -290,6 +306,8 @@ class _Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n) or b"{}")
 
     def do_GET(self):
+        if not self._local_only():
+            return
         if self.path.rstrip("/") == "/v1/models":
             return self._json(200, {"object": "list", "data": self.proxy.models()})
         if self.path.rstrip("/") == "/v1/opentrain/live":
@@ -297,12 +315,22 @@ class _Handler(BaseHTTPRequestHandler):
         self._error(404, f"no route {self.path}")
 
     def do_POST(self):
+        if not self._local_only():
+            return
         path = self.path.split("?")[0].rstrip("/")
+        # JSON only: a browser can send text/plain across sites without a preflight, but not JSON.
+        if not (self.headers.get("Content-Type") or "").lower().startswith("application/json"):
+            return self._error(415, "send Content-Type: application/json")
         try:
             body = self._body()
         except json.JSONDecodeError:
             return self._error(400, "body is not JSON")
         if path == "/v1/opentrain/switch":
+            import hmac
+
+            if not hmac.compare_digest(self.headers.get("X-OpenTrain-Token") or "", self.token):
+                return self._error(403, "switching versions needs the X-OpenTrain-Token from "
+                                        ".opentrain/serving/token (or use `opentrain model use`)")
             try:
                 use_version(self.proxy.state, body.get("version"), why=body.get("why", "switch via serve"))
             except RegistryError as e:
@@ -433,8 +461,15 @@ class _Handler(BaseHTTPRequestHandler):
 def make_server(state: Path, host: str = "127.0.0.1", port: int = DEFAULT_PORT,
                 handoff: Handoff | None = None) -> ThreadingHTTPServer:
     """The ``opentrain serve`` server, not yet started (call ``serve_forever``). Port 0 picks a free one."""
+    import secrets
+
     proxy = Proxy(Path(state), handoff)
-    handler = type("OpenTrainHandler", (_Handler,), {"proxy": proxy})
+    token = secrets.token_urlsafe(24)
+    tok = Path(state) / "serving" / "token"
+    tok.parent.mkdir(parents=True, exist_ok=True)
+    tok.write_text(token)
+    tok.chmod(0o600)
+    handler = type("OpenTrainHandler", (_Handler,), {"proxy": proxy, "token": token})
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server

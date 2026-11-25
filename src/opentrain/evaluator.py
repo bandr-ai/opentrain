@@ -29,6 +29,11 @@ from .state import write_json
 from .tasks import HeldoutStore
 
 
+class EvalBroken(RuntimeError):
+    """Attempts errored (CLI not logged in, endpoint down, rate limit). Their failures say nothing
+    about the model, so they are never kept as scores."""
+
+
 class EvalCapReached(RuntimeError):
     pass
 
@@ -50,12 +55,16 @@ class Evaluator:
         self.timeout, self.test_timeout = timeout, test_timeout
 
     def _score_all(self, runner: AgentRunner) -> list[Score]:
-        scores = []
+        scores, errors = [], 0
         for task in self.heldout:
             att = attempt_task(task, runner, timeout=self.timeout, test_timeout=self.test_timeout)
+            errors += bool(att.error) and not att.passed
             # The attempt (transcript, patch) is dropped here: only the numbers leave the evaluator.
-            scores.append(Score(task.task_id, att.passed is True, round(att.seconds, 3),
-                                att.tokens_in + att.tokens_out))
+            tokens = att.tokens_in + att.tokens_out
+            scores.append(Score(task.task_id, att.passed is True, round(att.seconds, 3), tokens or None))
+        if scores and errors > len(scores) // 2:
+            raise EvalBroken(f"{errors} of {len(scores)} attempts by {runner.name} errored before finishing; "
+                             "check the model is reachable (logged in, endpoint up) and try again")
         return scores
 
     def requests_used(self, run: Run) -> int:

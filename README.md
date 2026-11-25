@@ -1,6 +1,6 @@
 # OpenTrain
 
-**The open harness for training models**, in the way opencode is the open harness for coding.
+**The open source post-training harness.** What opencode is for coding, OpenTrain is for training.
 
 Your agent sessions already hold the data. OpenTrain turns them into verified tasks, trains a small
 model on them, and ships a new version only if it beats the current one on work it has never seen.
@@ -49,8 +49,8 @@ v1 passed the gate
 ## Install
 
 ```bash
-uv tool install "opentrain[tinker] @ git+https://github.com/bandr-ai/open-train"
-# or, to train on your own GPU:  opentrain[local]
+uv tool install "opentrain-cli[tinker] @ git+https://github.com/bandr-ai/opentrain"
+# or, to train on your own GPU:  opentrain-cli[local]
 ```
 
 Python 3.11+. The core has no dependencies; each trainer backend brings its own.
@@ -172,7 +172,7 @@ all of it in open formats for any other trainer.
 
 ```bash
 uv sync --extra dev
-.venv/bin/pytest -q      # 126 tests, no network
+.venv/bin/pytest -q      # 142 tests, no network
 .venv/bin/ruff check .
 ```
 

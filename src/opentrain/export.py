@@ -92,7 +92,13 @@ def export(state: Path, out: Path, include_heldout: bool = False) -> dict[str, A
         counts["heldout_withheld"] = len(held.ids())
 
     src = state / "data" / "train.jsonl"
-    if src.is_file():
+    mpath = state / "data" / "manifest.json"
+    built_on = {t["task_id"] for t in json.loads(mpath.read_text()).get("tasks", [])} if mpath.is_file() else None
+    # A set built before the split moved, or with no manifest to check, may contain held-out work.
+    clean = built_on is not None and not built_on & set(HeldoutStore(state).ids())
+    if src.is_file() and not clean:
+        counts["train_skipped"] = "stale: rebuild with `opentrain data build`"
+    if src.is_file() and clean:
         shutil.copyfile(src, out / "train.jsonl")
         with (out / "train.jsonl").open("rb") as fh:
             counts["train_records"] = sum(1 for line in fh if line.strip())

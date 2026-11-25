@@ -209,10 +209,7 @@ def check_rollback(state: Path, min_requests: int = 20, max_error: float = 0.2, 
     elif h["handoff_rate"] > max_handoff:
         why = f"{cur.version}: {h['handoff_rate']:.0%} of {h['requests']} live requests needed a handoff"
     if why:
-        prev = reg.revert(why)
-        from ..serving import use_version
-
-        use_version(state, prev.version if prev else None, why=why)
+        reg.revert(why)  # also clears any serving pin, so opentrain/current follows the rollback
     return why
 
 
@@ -362,9 +359,6 @@ def cmd_revert(args) -> int:
     except RegistryError as exc:
         print(exc, file=sys.stderr)
         return 1
-    from ..serving import use_version
-
-    use_version(state, prev.version if prev else None, why=args.why)
     print(f"Reverted    live is now {('opentrain/' + prev.version) if prev else 'nothing (base model)'}")
     return 0
 

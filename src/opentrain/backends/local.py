@@ -51,7 +51,7 @@ class LocalBackend:
     def available(self) -> tuple[bool, str]:
         missing = missing_modules(*DEPS)
         if missing:
-            return False, f"missing {', '.join(missing)}: pip install 'opentrain[local]'"
+            return False, f"missing {', '.join(missing)}: pip install 'opentrain-cli[local]'"
         dev = device()
         if dev == "cpu":
             return True, "ready on CPU only: expect many hours for a 7B+ model; a GPU or tinker is faster"

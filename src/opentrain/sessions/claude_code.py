@@ -31,7 +31,7 @@ DEFAULT_ROOT = Path.home() / ".claude" / "projects"
 _SHELL_TOOLS = {"Bash", "bash", "shell", "exec_command"}
 _EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 _WRAPPERS = re.compile(
-    r"<(system-reminder|command-name|command-message|command-args|local-command-stdout|"
+    r"<(system-reminder|command-name|command-message|local-command-stdout|"
     r"local-command-stderr|local-command-caveat|artifact-view-context)\b[^>]*>.*?</\1>",
     re.DOTALL,
 )
@@ -112,8 +112,13 @@ NOT_HUMAN = re.compile(
 compaction summaries, artifact relays. They arrive as user turns but nobody typed them."""
 
 
+_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
+
+
 def clean_prompt(text: str) -> str:
-    """The words a person typed, without the harness's wrappers and reminders."""
+    """The words a person typed, without the harness's wrappers and reminders. A slash command's
+    arguments are kept: ``/fix the login loop`` carries its ask in them."""
+    text = _ARGS.sub(lambda m: m.group(1), text)
     text = _WRAPPERS.sub("", text)
     return text.strip()
 
@@ -214,7 +219,8 @@ def load_session(path: Path, idle_cap: float = IDLE_CAP) -> Session | None:
                 instruction = instruction or prompt
                 prompts.append(prompt)
             if ts:
-                timeline.append((ts, "prompt", None))
+                kind = "injected" if prompt.startswith("[Request interrupted") else "prompt"
+                timeline.append((ts, kind, None))
             continue
 
         if rtype == "user" and ts and not side and _injected(r):

@@ -89,6 +89,7 @@ def sample(tasks: list[Task], runner: AgentRunner, n: int, state: Path, ledger: 
         raise ValueError("n must be at least 1")
 
     lock = threading.Lock()  # the ledger and the run record are read-then-append files
+    observed: list[float] = []
     stop = threading.Event()
     refused: list[str] = []
     jobs: list[tuple[Task, int]] = []
@@ -102,8 +103,11 @@ def sample(tasks: list[Task], runner: AgentRunner, n: int, state: Path, ledger: 
         if stop.is_set():
             return None
         with lock:
+            # Reserve what attempts have actually been costing (with headroom), never less than the
+            # caller's estimate: a flat $0 reservation would let every worker spend past the budget.
+            est = max(est_usd_per_attempt, 1.5 * max(observed, default=0.0))
             try:
-                rid = ledger.reserve(est_usd_per_attempt, f"attempt {task.task_id}#{index} ({runner.name})", run_id)
+                rid = ledger.reserve(est, f"attempt {task.task_id}#{index} ({runner.name})", run_id)
             except BudgetExceeded as exc:
                 stop.set()
                 refused.append(str(exc))
@@ -117,6 +121,7 @@ def sample(tasks: list[Task], runner: AgentRunner, n: int, state: Path, ledger: 
             raise
         with lock:
             ledger.settle(rid, att.cost_usd)
+            observed.append(att.cost_usd)
             if run:
                 run.add("spend", what="sample", task_id=task.task_id, index=index, model=att.model,
                         usd=att.cost_usd, tokens_in=att.tokens_in, tokens_out=att.tokens_out,
