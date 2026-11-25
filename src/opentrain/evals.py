@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .core.complete import Completion, CompletionError, complete
-from .datasets import DatasetError, Datasets, prompt_of, prompt_text, reference_of
+from .datasets import DatasetError, Datasets, prompt_of, prompt_text, reference_of, with_system
 from .graders import Grade, GraderError, grade
 
 WORKERS = 4
@@ -66,7 +66,7 @@ def run(state: Path, directory: Path, dataset: str, target: str, *, split: str =
             budget_check(spent[0])
         out: dict[str, Any] = {"id": row["id"]}
         try:
-            c: Completion = complete(target, prompt_of(row), state=state)
+            c: Completion = complete(target, prompt_of(with_system(row, meta.get("system"))), state=state)
             out.update(seconds=round(c.seconds, 3), tokens=c.output_tokens, cost=c.cost, answer=c.text)
             g: Grade = grade(spec, prompt_text(row), c.text, reference_of(row), directory=directory,
                              default_model=judge_model)

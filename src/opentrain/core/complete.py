@@ -104,7 +104,7 @@ def _claude_code(model: str, messages, timeout, t0) -> Completion:
     if not exe:
         raise CompletionError("Claude Code is not installed")
     system, prompt = _flatten(messages)
-    argv = [exe, "-p", "--output-format", "json", "--tools", "", "--strict-mcp-config", "--setting-sources", "",
+    argv = [exe, "-p", "--output-format", "stream-json", "--verbose", "--tools", "", "--strict-mcp-config", "--setting-sources", "",
             "--system-prompt", system or "You are a helpful assistant. Answer directly."]
     if model not in ("default", ""):
         argv += ["--model", model]
@@ -113,17 +113,27 @@ def _claude_code(model: str, messages, timeout, t0) -> Completion:
                            cwd=os.path.expanduser("~"))
     except subprocess.TimeoutExpired:
         raise CompletionError(f"claude did not answer within {timeout:.0f}s") from None
-    try:
-        out = json.loads(p.stdout.strip().splitlines()[-1])
-    except (ValueError, IndexError):
-        raise CompletionError(f"claude failed (exit {p.returncode}): {(p.stderr or p.stdout)[-400:]}") from None
+    out: dict[str, Any] = {}
+    billing = "api"
+    for line in p.stdout.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if ev.get("type") == "system" and ev.get("subtype") == "init":
+            billing = "plan" if ev.get("apiKeySource") == "none" else "api"
+        elif ev.get("type") == "result":
+            out = ev
+    if not out:
+        raise CompletionError(f"claude failed (exit {p.returncode}): {(p.stderr or p.stdout)[-400:]}")
     if out.get("is_error"):
         raise CompletionError(f"claude: {out.get('result') or out.get('subtype')}")
     u = out.get("usage") or {}
-    return Completion(text=out.get("result") or "", seconds=time.time() - t0,
-                      cost=float(out.get("total_cost_usd") or 0.0),
+    # Under a subscription the reported cost is notional: nothing is billed, so nothing is drawn from the budget.
+    cost = float(out.get("total_cost_usd") or 0.0) if billing == "api" else 0.0
+    return Completion(text=out.get("result") or "", seconds=time.time() - t0, cost=cost,
                       input_tokens=(u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0),
-                      output_tokens=u.get("output_tokens") or 0, billing="plan")
+                      output_tokens=u.get("output_tokens") or 0, billing=billing)
 
 
 def _provider(ref: str, messages, max_tokens, t0) -> Completion:

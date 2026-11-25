@@ -48,9 +48,10 @@ def _engine(hub: Hub, p: Project) -> None:
 
 def extra_routes() -> list[web.RouteTableDef]:
     from .dashboard import routes as web_routes
+    from .data_routes import routes as data_routes
     from .routes import routes
 
-    return [routes, web_routes]
+    return [routes, data_routes, web_routes]
 
 
 def configure_app(app: web.Application) -> None:

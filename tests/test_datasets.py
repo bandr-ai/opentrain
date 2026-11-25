@@ -23,6 +23,12 @@ def test_normalize_shapes():
     assert dsm.reference_of(c) == "a"
     d = dsm.normalize({"body": "x", "reply": "y"}, input_key="body", output_key="reply", system="sys")
     assert d["messages"][0] == {"role": "system", "content": "sys"} and dsm.reference_of(d) == "y"
+    f = dsm.normalize({"ticket": "my card was charged twice", "category": "billing"})
+    assert dsm.prompt_text(f).startswith("my card") and dsm.reference_of(f) == "billing"
+    g = dsm.normalize({"Frage": "wie?", "Antwort": "so"})  # unknown names, two columns: first is the prompt
+    assert dsm.prompt_text(g) == "wie?" and dsm.reference_of(g) == "so"
+    h = dsm.normalize({"Question": "q", "Answer": "a"})
+    assert dsm.reference_of(h) == "a"
     e = dsm.normalize({"prompt": "unlabelled"})
     assert dsm.reference_of(e) is None
     with pytest.raises(dsm.DatasetError):

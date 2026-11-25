@@ -31,9 +31,11 @@ from pathlib import Path
 from typing import Any, Iterable
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-PROMPT_KEYS = ("prompt", "input", "question", "instruction", "query", "text", "source", "problem", "user")
+PROMPT_KEYS = ("prompt", "input", "question", "instruction", "query", "text", "source", "problem", "user",
+               "message", "ticket", "email", "content", "sentence", "document", "request", "body")
 ANSWER_KEYS = ("completion", "output", "answer", "response", "target", "label", "solution", "chosen",
-               "assistant", "reference")
+               "assistant", "reference", "category", "class", "reply", "summary", "translation", "result",
+               "expected", "ground_truth")
 SYSTEM_KEYS = ("system", "system_prompt")
 MAX_ROWS = 200_000
 HF_ROWS = "https://datasets-server.huggingface.co"
@@ -63,6 +65,7 @@ def normalize(raw: dict[str, Any], *, input_key: str | None = None, output_key: 
     if not isinstance(raw, dict):
         raise DatasetError("a row must be an object")
     msgs: list[dict[str, str]] = []
+    ik = ok = None
     convo = raw.get("messages") or raw.get("conversations") or raw.get("conversation")
     if isinstance(convo, list) and convo and not input_key:
         for m in convo:
@@ -73,10 +76,17 @@ def normalize(raw: dict[str, Any], *, input_key: str | None = None, output_key: 
                 continue  # tool turns are not part of a plain chat example
             msgs.append({"role": role, "content": _text(m.get("content", m.get("value")))})
     else:
-        ik = input_key or next((k for k in PROMPT_KEYS if raw.get(k) not in (None, "")), None)
+        ik = input_key or _pick(raw, PROMPT_KEYS)
+        ok = output_key or _pick(raw, ANSWER_KEYS, exclude=ik)
+        if ik is None:  # unfamiliar names: with one or two text columns the meaning is still clear
+            cols = [k for k, v in raw.items() if isinstance(v, str) and k != "id" and k not in SYSTEM_KEYS]
+            if 1 <= len(cols) <= 2 and (ok is None or ok in cols):
+                rest = [c for c in cols if c != ok]
+                ik = rest[0] if rest else None
+                if ok is None and len(cols) == 2:
+                    ok = cols[1]
         if ik is None or raw.get(ik) in (None, ""):
-            raise DatasetError(f"no prompt column (looked for {', '.join(PROMPT_KEYS)}; name it with input_key)")
-        ok = output_key or next((k for k in ANSWER_KEYS if k != ik and raw.get(k) not in (None, "")), None)
+            raise DatasetError(f"no prompt column among {', '.join(sorted(raw)[:12])}: say which one with input_key")
         sk = next((k for k in SYSTEM_KEYS if raw.get(k)), None)
         if sk:
             msgs.append({"role": "system", "content": _text(raw[sk])})
@@ -87,11 +97,26 @@ def normalize(raw: dict[str, Any], *, input_key: str | None = None, output_key: 
         msgs.insert(0, {"role": "system", "content": system})
     if not any(m["role"] == "user" for m in msgs):
         raise DatasetError("a row needs at least one user turn")
-    used = {"messages", "conversations", "conversation", "id", input_key, output_key, *PROMPT_KEYS, *ANSWER_KEYS,
-            *SYSTEM_KEYS}
+    used = {"messages", "conversations", "conversation", "id", ik, ok, *PROMPT_KEYS, *ANSWER_KEYS, *SYSTEM_KEYS}
     meta = {k: v for k, v in raw.items() if k not in used and isinstance(v, (str, int, float, bool))}
     rid = str(raw.get("id") or "")[:80] or _sha(msgs)[:16]
     return {"id": rid, "messages": msgs, **({"meta": meta} if meta else {})}
+
+
+def with_system(row: dict[str, Any], system: str | None) -> dict[str, Any]:
+    """The row with the dataset's system prompt in front, unless the row has its own."""
+    if not system or any(m["role"] == "system" for m in row["messages"]):
+        return row
+    return {**row, "messages": [{"role": "system", "content": system}, *row["messages"]]}
+
+
+def _pick(raw: dict[str, Any], keys: tuple[str, ...], exclude: str | None = None) -> str | None:
+    lower = {k.lower(): k for k in raw}
+    for k in keys:
+        real = lower.get(k)
+        if real and real != exclude and raw.get(real) not in (None, ""):
+            return real
+    return None
 
 
 def prompt_of(row: dict[str, Any]) -> list[dict[str, str]]:
@@ -252,7 +277,7 @@ class Datasets:
         if description:
             meta["description"] = description
         seen = {r["id"] for r in self.rows(name)} | set(self.heldout_ids(name)) if self.exists(name) else set()
-        train, held, errors, dup = [], [], [], 0
+        train, held, errors, dup, skipped = [], [], [], 0, 0
         for i, raw in enumerate(raw_rows):
             if len(seen) + len(train) + len(held) >= MAX_ROWS:
                 errors.append(f"stopped at {MAX_ROWS} rows")
@@ -260,8 +285,10 @@ class Datasets:
             try:
                 row = normalize(raw, input_key=input_key, output_key=output_key, system=system or meta.get("system"))
             except (DatasetError, ValueError) as exc:
-                if len(errors) < 20:
-                    errors.append(f"row {i + 1}: {exc}")
+                msg = str(exc)
+                if not any(e.endswith(msg) for e in errors) and len(errors) < 20:
+                    errors.append(f"row {i + 1}: {msg}")
+                skipped += 1
                 continue
             if row["id"] in seen:
                 dup += 1
@@ -269,7 +296,7 @@ class Datasets:
             seen.add(row["id"])
             (held if _side(row["id"], seed) < heldout else train).append(row)
         if not train and not held and not self.exists(name):
-            raise DatasetError("no usable rows" + (f": {'; '.join(errors[:3])}" if errors else ""))
+            raise DatasetError("no usable rows" + (f" ({errors[0].split(': ', 1)[1]})" if errors else ""))
         d.mkdir(parents=True, exist_ok=True)
         self.sealed.mkdir(parents=True, exist_ok=True)
         _append(d / "train.jsonl", train)
@@ -278,7 +305,7 @@ class Datasets:
             meta.setdefault("sources", []).append({**source, "rows": len(train) + len(held), "time": time.time()})
         meta = self._write_meta(name, meta)
         return {"dataset": name, "added_train": len(train), "added_heldout": len(held), "duplicates": dup,
-                "errors": errors, "counts": meta["counts"]}
+                "skipped": skipped, "errors": errors, "counts": meta["counts"]}
 
     def label(self, name: str, row_id: str, answer: str) -> None:
         """Set the reference answer of a training row (a teacher's or the user's)."""
@@ -316,7 +343,8 @@ class Datasets:
     def training_file(self, name: str, out: Path) -> dict[str, Any]:
         """Write the labelled training rows as chat examples; returns the manifest."""
         held = set(self.heldout_ids(name))
-        rows = [r for r in self.rows(name) if reference_of(r) is not None and r["id"] not in held]
+        system = self.meta(name).get("system")
+        rows = [with_system(r, system) for r in self.rows(name) if reference_of(r) is not None and r["id"] not in held]
         if not rows:
             raise DatasetError(f"{name} has no labelled training rows (every row needs a reference answer)")
         out.parent.mkdir(parents=True, exist_ok=True)

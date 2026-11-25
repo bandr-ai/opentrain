@@ -151,7 +151,7 @@ def dataset_label(ctx: ToolContext, name: str, teacher: str | None = None, only_
                   limit: int = 500) -> ToolResult:
     """Fill reference answers on training rows with a teacher model (distillation)."""
     from ...core.complete import CompletionError, complete
-    from ...datasets import prompt_of, reference_of
+    from ...datasets import prompt_of, reference_of, with_system
 
     ds = _ds(ctx)
     rows = _err(ds.rows)(name)
@@ -166,7 +166,7 @@ def dataset_label(ctx: ToolContext, name: str, teacher: str | None = None, only_
         for r in todo:
             job.check()
             try:
-                c = complete(model, prompt_of(r), state=state)
+                c = complete(model, prompt_of(with_system(r, ds.meta(name).get("system"))), state=state)
                 ds.label(name, r["id"], c.text)
                 cost += c.cost
                 done += 1
