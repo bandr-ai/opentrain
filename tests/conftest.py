@@ -82,3 +82,19 @@ def repo(tmp_path: Path) -> Path:
     git(r, "add", ".")
     git(r, "commit", "-q", "-m", "base", when=T0 - timedelta(hours=1))
     return r
+
+
+@pytest.fixture
+def live(tmp_path):
+    """A running server whose default project is ``tmp_path / 'proj'``."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from harness import LiveServer
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    srv = LiveServer(proj)
+    srv.proj = proj
+    yield srv
+    srv.stop()
