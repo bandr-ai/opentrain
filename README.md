@@ -2,32 +2,24 @@
 
 **The open harness for training models.** What opencode is for coding, OpenTrain is for training.
 
-You talk to an agent; the thing it works on is a model, not a codebase. It turns your own work (your
-coding-agent sessions and repos) into verified tasks, trains a model on them, and ships a new version
-only when it beats the current one on work it has never seen. It asks before it spends money, uploads
-data or changes what is live.
+You tell an agent what a model should get better at, in your own words. It gets the data, decides
+how answers are graded, measures a baseline, trains, and ships a new version only when it beats the
+current one on examples it has never seen. It asks before it spends money, uploads data or changes
+what is live.
 
 ```
-$ opentrain
+$ opentrain web        # the web app (or: opentrain, for the terminal app)
 ```
 
-```
- OpenTrain  myrepo │ train  claude-code/default │ idle │ budget $0 used · $40 left
-
- ▌ make me a model that does my routine coding work much faster
-
- train · claude-code/default · 6.2s
- I'll check where things stand, then mine your sessions into verified tasks.
- ▶ ✓ status
- ▶ ✓ tasks_mine  mining tasks
-   ┌ mine  mine sessions into tasks ───────────────────────────┐
-   │ ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱  running  1m12s                       │
-   └───────────────────────────────────────────────────────────┘
- ┌──────────────────────────────────────────────────────────────┐
- │ train wants to spend $14.20 on tinker   (budget left $40.00) │
- │ [1 Allow once]  [2 Always]  [3 Reject]                        │
- └──────────────────────────────────────────────────────────────┘
-```
+- **Any data.** A file you have (JSONL, JSON, CSV), a public Hugging Face dataset, examples the
+  agent writes with you from a description, a teacher model's answers (distillation), or your
+  coding-agent sessions when you ask for that.
+- **Any way of checking an answer.** Exact, contains, a pattern, JSON, a number, a model judge with
+  your rubric, or your own script.
+- **Any model to compare.** Evaluate Claude, GPT, an open model or your own trained versions on the
+  same held-out rows; the leaderboard tells you whether training is even worth it.
+- **Proof before shipping.** Part of every dataset is sealed from training. A version goes live only
+  when it beats the baseline on those rows with nothing regressing.
 
 ## Install
 
@@ -69,13 +61,30 @@ The same shape as opencode: one server per user, and every front end is a client
 - **Jobs belong to the server.** Mining, sampling, scoring and training return at once; clients see
   progress live, and the agent gets a reminder when a job ends.
 
+## The web app
+
+`opentrain web` opens it in your browser (a one-time sign-in link; it talks to your local server).
+
+| Page | What it is for |
+| --- | --- |
+| Chat | the agent: say what you want; tool calls, jobs and approvals appear inline |
+| Data | datasets: upload, Hugging Face, or written with the agent; rows, grader, system prompt |
+| Evals | run any model on held-out rows; a leaderboard per dataset; every row's result |
+| Models | trained versions, the gate, and a playground to compare answers side by side |
+| Jobs | evals, labelling and training as they run, with logs |
+| Settings | the Trainfile, trainer and base model, the engine model, keys, saved approvals |
+
+The app is built from `web/` (Vite + React) into the package, so using it needs no Node:
+`cd web && pnpm install && pnpm build` after changing it, `pnpm dev` to work on it against a
+running server.
+
 ## Agents
 
 | Agent | Can |
 | --- | --- |
-| `train` (default) | everything within the Trainfile, asking before shell commands, edits, spending, uploading, launching, promoting and serving |
+| `train` (default) | starts from what you ask; data, grading, evals, training and the gate, asking before shell commands, edits, spending, uploading, launching, promoting and serving |
 | `plan` (tab) | read, scan sessions, estimate cost; never spends, trains or changes files (except plans) |
-| `data` (subagent) | mine and repair tasks, draft verifiers |
+| `data` (subagent) | import, write and clean dataset rows, propose graders; mine and repair coding tasks |
 | `monitor` (subagent) | look at jobs, read-only |
 | `evaluator` (hidden) | the only reader of held-out tasks; runs in its own process |
 
@@ -108,7 +117,7 @@ The policy, enforced by the server. Written with defaults the first time you use
 repo; edit it any time (or use `/trainer`).
 
 ```
-goal         speed
+goal         draft our support replies as well as the current model, much cheaper
 budget       $40 a week, model tokens and compute together
 promote      beats current on held-out, no task regresses
 trainer      tinker
@@ -139,7 +148,9 @@ In the terminal app: **enter** send · **ctrl+j** new line · **tab** train ⇄ 
 `/models` `/connect` `/trainer` `/agents` `/sessions` `/jobs` `/versions` `/help`. Add your own as
 Markdown in `.opentrain/commands/`.
 
-## Recipes are skills
+`goal` is plain words. `speed`, `fix` and `cost` are built-in recipes for coding-agent work.
+
+## Recipes are skills (coding-agent work)
 
 | Goal | Data recipe | Training recipe | Proved by |
 | --- | --- | --- | --- |
@@ -155,7 +166,9 @@ Markdown in `.opentrain/commands/`.
 | Engine loop with Claude Code (your login) as the provider | Run live |
 | Anthropic and OpenAI-compatible providers | Written against the docs; tested with a scripted provider |
 | Tools, permissions, budget, jobs, sandbox, provenance gate | Tested |
-| Terminal app, `run`, `web`, `attach` | Tested (Textual pilot and live server) |
+| Datasets (file, Hugging Face, agent-written), graders, evals, the dataset gate | Tested; evals run live with Claude Code |
+| Web app | Driven end to end in a browser: upload, grading, a live eval, chat with approvals |
+| Terminal app, `run`, `attach` | Tested (Textual pilot and live server) |
 | Mining tasks from Claude Code sessions | Runs on real logs; yield on real sessions is low (see docs/FINDINGS.md) |
 | Tinker training | Written against SDK 0.40; **no real training run yet** (needs `TINKER_API_KEY`) |
 | Local training (TRL + PEFT) | Written; untested here |
