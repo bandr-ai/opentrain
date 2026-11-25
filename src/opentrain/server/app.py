@@ -266,8 +266,17 @@ async def list_sessions(request: web.Request):
 async def create_session(request: web.Request):
     b = await body_of(request)
     p = project_of(request)
-    s = p.create_session(title=b.get("title"), agent=b.get("agent") or request.app[DEFAULT_AGENT](p),
-                         model=b.get("model"), parent_id=b.get("parent_id"))
+    agent = b.get("agent") or request.app[DEFAULT_AGENT](p)
+    if "agents" in p.services and p.services["agents"].find(agent) is None:
+        raise ApiError(400, f"no agent {agent!r}")
+    perms = b.get("permissions")
+    if perms is not None and not (isinstance(perms, list) and all(
+            isinstance(r, dict) and r.get("effect") in ("allow", "ask", "deny") for r in perms)):
+        raise ApiError(400, "permissions must be a list of {action, resource, effect} rules")
+    s = p.create_session(title=b.get("title"), agent=agent, model=b.get("model"), parent_id=b.get("parent_id"),
+                         metadata=b.get("metadata"))
+    if perms:
+        s = p.store.update("session", s["id"], {"permissions": perms})
     return ok(s, 201)
 
 

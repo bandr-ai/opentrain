@@ -179,6 +179,10 @@ class Runner:
                 await self._turn(sid)
         except asyncio.CancelledError:
             self._close_turn(sid, "interrupted", "interrupted by the user")
+        except BudgetStop as exc:
+            self._close_turn(sid, "error", str(exc))
+            for it in self._pending(sid):
+                self.store.update("inbox", it["id"], {"status": "cancelled"})
         except Exception as exc:  # the loop never dies silently
             log.exception("turn failed")
             self._close_turn(sid, "error", f"{type(exc).__name__}: {exc}")

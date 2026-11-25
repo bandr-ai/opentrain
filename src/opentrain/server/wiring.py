@@ -27,8 +27,12 @@ def _engine(hub: Hub, p: Project) -> None:
     p.services["agents"] = Agents(p)
     p.services["tools"] = Registry()
     register_all(p)
+    from ..core.permission import BudgetHook, Permissions
+
     p.services["questions"] = Questions(p)
+    p.services["permissions"] = Permissions(p)
     p.services["runner"] = Runner(p, hub.loop)
+    p.services["runner"].on_usage.append(BudgetHook(p))
     p.services["jobs"] = Jobs(p, hub.loop)
 
 

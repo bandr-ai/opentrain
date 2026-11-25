@@ -18,13 +18,13 @@ _SCRIPTS: dict[str, "ScriptedProvider"] = {}
 class ScriptedProvider:
     kind = "step"
 
-    def __init__(self, name: str, turns: list[list[Any]], delay: float = 0.0):
-        self.id, self.name, self.turns, self.delay = "scripted", name, list(turns), delay
+    def __init__(self, name: str, turns: list[list[Any]], delay: float = 0.0, cost: float = 0.0):
+        self.id, self.name, self.turns, self.delay, self.cost = "scripted", name, list(turns), delay, cost
         self.requests: list[Request] = []
 
     @classmethod
-    def register(cls, name: str, turns: list[list[Any]], delay: float = 0.0) -> "ScriptedProvider":
-        _SCRIPTS[name] = cls(name, turns, delay)
+    def register(cls, name: str, turns: list[list[Any]], delay: float = 0.0, cost: float = 0.0) -> "ScriptedProvider":
+        _SCRIPTS[name] = cls(name, turns, delay, cost)
         return _SCRIPTS[name]
 
     @classmethod
@@ -46,5 +46,5 @@ class ScriptedProvider:
             elif isinstance(item, dict) and "tool" in item:
                 calls += 1
                 yield ToolCall(item.get("id") or f"call_{len(self.requests)}_{i}", item["tool"], item.get("input", {}))
-        yield Usage(input=100, output=20, cost=0.0)
+        yield Usage(input=100, output=20, cost=self.cost)
         yield Finish("tool_calls" if calls else "stop")

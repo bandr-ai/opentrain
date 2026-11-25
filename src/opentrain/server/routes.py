@@ -126,3 +126,29 @@ async def skills(request: web.Request):
 @routes.get("/api/tool")
 async def tools(request: web.Request):
     return ok([t.spec() for t in project_of(request).services["tools"].tools.values()])
+
+
+@routes.get("/api/permission")
+async def permissions(request: web.Request):
+    return ok(project_of(request).services["permissions"].pending(request.query.get("session")))
+
+
+@routes.post("/api/session/{sid}/permission/{pid}/reply")
+async def permission_reply(request: web.Request):
+    b = await body_of(request)
+    perms = project_of(request).services["permissions"]
+    try:
+        return ok(perms.reply(request.match_info["pid"], b.get("reply", ""), b.get("message")))
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from None
+
+
+@routes.get("/api/approval")
+async def approvals(request: web.Request):
+    return ok(project_of(request).services["permissions"].approvals())
+
+
+@routes.delete("/api/approval/{aid}")
+async def revoke(request: web.Request):
+    project_of(request).services["permissions"].revoke(request.match_info["aid"])
+    return ok({"revoked": request.match_info["aid"]})
