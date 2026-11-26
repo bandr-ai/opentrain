@@ -5,13 +5,13 @@ import { ago, Icon, Modal, toast, toastError, useAsync } from "../ui";
 
 type Policy = { path: string; exists: boolean; text: string; parsed: any; error: string | null };
 type Integration = { id: string; name: string; kind: string; env?: string | null; url?: string; connected: boolean; via?: string | null; hint?: string | null };
-type Trainer = { name: string; available: boolean; detail: string; credential?: string | null; base_models: string[] };
+type Trainer = { name: string; available: boolean; detail: string; credential?: string | null; base_models: { id: string; params?: string; note?: string }[] };
 type Approval = { id: string; action: string; resource: string; time?: { created?: number } };
 
 export default function Settings() {
   return (
     <div className="page"><div className="page-inner">
-      <div className="page-head"><div><h1>Settings</h1><p>The policy OpenTrain enforces, where training runs, and the accounts it can use.</p></div></div>
+      <div className="page-head"><div><h1>Settings</h1><p>Policy, trainer and connected accounts.</p></div></div>
       <Trainfile />
       <TrainerCard />
       <Connections />
@@ -44,10 +44,9 @@ function Trainfile() {
     <div className="card" style={{ marginBottom: 20 }}>
       <div className="card-head">
         <h3>Trainfile</h3>
-        <span className="small faint mono">{data?.path}</span>
+        <span className="small faint" title={data?.path}>the policy the server enforces, line by line</span>
       </div>
       <div className="card-pad">
-        <p className="small muted" style={{ marginTop: 0 }}>What OpenTrain may do on your behalf: the goal in your words, the budget (model tokens and compute together), when a version may go live, the trainer and base model, how much data is held out. The server enforces every line.</p>
         <textarea className="textarea editor" value={text} onChange={(e) => { setText(e.target.value); setErr(null); }} spellCheck={false} />
         <div className="row" style={{ marginTop: 10 }}>
           <span className="grow small">{err ? <span className="err">{err}</span> : !data?.exists ? <span className="faint">Not saved yet: these are the defaults.</span> : null}</span>
@@ -93,7 +92,7 @@ function TrainerCard() {
           <span>Base model</span>
           <div className="row">
             <input className="input mono" list="bases" value={base} onChange={(e) => setBase(e.target.value)} />
-            <datalist id="bases">{t?.base_models.map((b) => <option key={b} value={b} />)}</datalist>
+            <datalist id="bases">{(t?.base_models || []).map((b) => <option key={b.id} value={b.id}>{[b.params, b.note].filter(Boolean).join(" · ")}</option>)}</datalist>
             <button className="btn" disabled={!base || base === data?.policy?.base_model} onClick={() => set({ base_model: base })}>Set</button>
           </div>
           <small>The open model training starts from.</small>

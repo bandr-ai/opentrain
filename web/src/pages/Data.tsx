@@ -18,7 +18,7 @@ function DatasetList() {
       <div className="page-head">
         <div>
           <h1>Data</h1>
-          <p>Examples of what the model should do. Part of every dataset is held out, sealed from training, to prove a model works on examples it has never seen.</p>
+          <p>Examples of what the model should do. A share of each is held out and sealed from training.</p>
         </div>
         <div className="actions"><button className="btn primary" onClick={() => setCreating(true)}><Icon name="plus" /> New dataset</button></div>
       </div>
@@ -265,9 +265,9 @@ function Dataset({ name }: { name: string }) {
       </div>
 
       {scores.length > 0 && (
-        <div className="card card-pad" style={{ marginBottom: 20 }}>
-          <div className="row" style={{ marginBottom: 12 }}><h3 className="grow">Held-out scores</h3><a href={`#/evals`} className="small">All evals</a></div>
-          <div className="bars">
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="card-head"><h3>held-out scores</h3><a href={`#/evals`} className="small">all evals</a></div>
+          <div className="bars card-pad">
             {scores.map(([target, s]) => (
               <div key={target} className="barrow" style={{ cursor: "pointer" }} onClick={() => go("evals", s.eval)}>
                 <span className="lbl" title={target}>{target}</span>

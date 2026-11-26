@@ -12,7 +12,7 @@ export default function Jobs({ id }: { id?: string }) {
   const done = jobs.filter((j) => j.state !== "running");
   return (
     <div className="page"><div className="page-inner">
-      <div className="page-head"><div><h1>Jobs</h1><p>Work that runs on the server: imports, labelling, evals, training. It keeps going when you close the browser.</p></div></div>
+      <div className="page-head"><div><h1>Jobs</h1><p>Imports, labelling, evals and training. They keep running when you close the tab.</p></div></div>
       {running.length > 0 && <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>{running.map((j) => <JobCard key={j.id} job={j} />)}</div>}
       {jobs.length === 0 ? <div className="card"><Empty title="No jobs yet">Evals, labelling and training show up here while they run.</Empty></div> : done.length > 0 && (
         <div className="card">

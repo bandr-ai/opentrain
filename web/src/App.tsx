@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, events, Job, ModelRow, Session, Status } from "./api";
-import { Icon, money, throttle, Toasts } from "./ui";
+import { money, throttle, Toasts } from "./ui";
 import Chat from "./pages/Chat";
 import Data from "./pages/Data";
 import Evals from "./pages/Evals";
@@ -62,6 +62,20 @@ export default function App() {
     const f = () => setRoute(parse(window.location.hash));
     window.addEventListener("hashchange", f);
     return () => window.removeEventListener("hashchange", f);
+  }, []);
+
+  useEffect(() => {
+    const f = (e: globalThis.KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable]")) return;
+      const n = Number(e.key);
+      if (n >= 1 && n <= NAV.length) go(NAV[n - 1].page);
+      else if (e.key === "n") go("chat", "new");
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", f);
+    return () => window.removeEventListener("keydown", f);
   }, []);
 
   const reloadStatus = useCallback(() => {
@@ -144,42 +158,42 @@ export default function App() {
     <Ctx.Provider value={state}>
       <div className="shell">
         <aside className="rail">
-          <div className="brand"><Icon name="logo" /> OpenTrain</div>
+          <div className="brand">opentrain</div>
           <div className="project" title={status?.project?.directory}>{status?.project?.name || "…"}</div>
           <nav className="nav">
-            {NAV.map((n) => (
+            {NAV.map((n, i) => (
               <button key={n.page} className={route.page === n.page ? "on" : ""} onClick={() => go(n.page)}>
-                <Icon name={n.icon} /> {n.label}
-                {n.page === "jobs" && running > 0 && <span className="count">{running}</span>}
-                {n.page === "data" && (status?.datasets?.length ?? 0) > 0 && <span className="count">{status!.datasets.length}</span>}
+                {n.label.toLowerCase()}
+                {n.page === "jobs" && running > 0 && <span className="count">{running} running</span>}
+                <span className="key">{i + 1}</span>
               </button>
             ))}
           </nav>
           <div className="rail-section">
-            Conversations
-            <button className="btn ghost sm" title="New conversation" onClick={() => go("chat", "new")}><Icon name="plus" /></button>
+            sessions
+            <button className="btn ghost sm" title="New session (n)" onClick={() => go("chat", "new")}>+ new</button>
           </div>
           <div className="sessions">
-            {topSessions.length === 0 && <div className="faint small" style={{ padding: "4px 10px" }}>None yet</div>}
+            {topSessions.length === 0 && <div className="faint small" style={{ padding: "4px 8px" }}>none yet</div>}
             {topSessions.map((s) => (
               <button key={s.id} className={route.page === "chat" && route.arg === s.id ? "on" : ""}
                 onClick={() => go("chat", s.id)} title={s.title}>
-                {busy[s.id] && <span className="busy-dot" />}
-                {s.title || "New conversation"}
+                <span className={`dot ${busy[s.id] ? (busy[s.id] === "waiting" ? "waiting" : "busy") : ""}`} />
+                <span className="t">{s.title || "new session"}</span>
               </button>
             ))}
           </div>
           <div className="rail-foot">
             {b && (
               <>
-                <div className="row"><span className="grow">Budget</span><span>{money(b.committed_usd)} of {money(total)}</span></div>
+                <div className="row"><span className="grow">budget</span><span>{money(b.committed_usd)} / {money(total)}</span></div>
                 <div className="budget-bar"><i style={{ width: `${total ? Math.min(100, (b.committed_usd / total) * 100) : 0}%` }} /></div>
               </>
             )}
             <div className="row">
-              <span className={`conn ${connected ? "" : "off"}`}><i /> {connected ? "Live" : "Reconnecting…"}</span>
+              <span className={`conn ${connected ? "" : "off"}`}><i /> {connected ? "connected" : "reconnecting…"}</span>
               <span className="grow" />
-              {status?.live?.version && <span className="badge good">{status.live.version} live</span>}
+              {status?.live?.version && <span className="badge good">{status.live.version}</span>}
             </div>
           </div>
         </aside>

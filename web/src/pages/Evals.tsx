@@ -21,7 +21,7 @@ function EvalList() {
       <div className="page-head">
         <div>
           <h1>Evals</h1>
-          <p>Any model on a dataset's held-out rows, every answer graded. Scores are comparable because every model sees the same rows.</p>
+          <p>Models scored on the same held-out rows.</p>
         </div>
         <div className="actions"><button className="btn primary" onClick={() => setRun(true)}><Icon name="play" /> Run an eval</button></div>
       </div>

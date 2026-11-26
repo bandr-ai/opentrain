@@ -27,7 +27,7 @@ export default function Models() {
       <div className="page-head">
         <div>
           <h1>Models</h1>
-          <p>Every version you trained, how it scored, and which one is live. A version goes live only when the gate says it beats the baseline on held-out rows.</p>
+          <p>Trained versions. One goes live only when it beats the baseline on held-out rows.</p>
         </div>
         <div className="actions"><button className="btn primary" onClick={() => train().catch(toastError)}><Icon name="spark" /> Train a model</button></div>
       </div>
@@ -182,7 +182,7 @@ function Playground({ versions }: { versions: Version[] }) {
         {answers.length > 0 && (
           <div className="compare">
             {answers.map((a, i) => (
-              <div key={i} className="card card-pad" style={{ background: "var(--sunken)" }}>
+              <div key={i} className="card card-pad">
                 <div className="row small" style={{ marginBottom: 6 }}>
                   <b className="mono grow">{a.model}</b>
                   {a.seconds !== undefined && <span className="faint">{dur(a.seconds)}{a.cost_usd ? ` · ${money(a.cost_usd)}` : ""}</span>}

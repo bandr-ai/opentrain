@@ -60,13 +60,9 @@ function Welcome() {
       <div className="scroll">
         <div className="welcome">
           <h1>What should your model get better at?</h1>
-          <p>
-            Describe it in your own words. OpenTrain gets the data, decides how to grade answers, measures a baseline,
-            trains, and only ships a version that wins on examples it has never seen.
-            {status?.policy && <> Budget: <b>{status.policy.budget}</b>.</>}
-          </p>
+          <p>Say it in your own words. Nothing is spent or uploaded without asking{status?.policy?.budget ? <> · budget {status.policy.budget}</> : null}.</p>
           <Composer onSend={start} agent={agent} setAgent={setAgent} model={model} setModel={setModel}
-            autoFocus commands={commands} placeholder="e.g. Make a small model that drafts our support replies, from tickets.csv" />
+            autoFocus commands={commands} placeholder="e.g. a small model that sorts our support tickets, from tickets.csv" />
           <div className="starters">
             {STARTERS.map((s) => (
               <button key={s.title} className="starter" onClick={() => {
@@ -190,11 +186,11 @@ function Conversation({ sid }: { sid: string }) {
       <div className="chat-head">
         <h2>{session?.title || "New conversation"}</h2>
         <span className={`status-pill ${isBusy ? (state === "waiting" ? "waiting" : "busy") : ""}`}>
-          <i /> {state === "waiting" ? "waiting for you" : state === "idle" ? "idle" : state}
+          <i /> {state === "waiting" ? "needs you" : state === "idle" ? "idle" : "working"}
         </span>
         {isBusy && (
           <button className="btn sm" onClick={() => api.post(`/api/session/${sid}/interrupt`).catch(toastError)}>
-            <Icon name="stop" /> Stop
+            stop
           </button>
         )}
       </div>
@@ -210,13 +206,13 @@ function Conversation({ sid }: { sid: string }) {
           {perms.map((p) => <PermissionAsk key={p.id} p={p} onDone={loadAsks} />)}
           {questions.map((q) => <QuestionAsk key={q.id} q={q} onDone={loadAsks} />)}
           {isBusy && state !== "waiting" && !messages.some((m) => m.role === "assistant" && !m.finish && m.parts.length) && (
-            <div className="row muted small"><span className="spinner" /> thinking…</div>
+            <div className="row faint small"><span className="dot busy" /> thinking…</div>
           )}
         </div>
       </div>
       <div className="composer-wrap">
         <Composer onSend={onSend} agent={agent} setAgent={setAgent} model={model} setModel={setModel}
-          busy={isBusy} commands={commands} placeholder={isBusy ? "Steer the agent while it works…" : "Reply…"} autoFocus />
+          busy={isBusy} commands={commands} placeholder={isBusy ? "steer while it works…" : "reply…"} autoFocus />
       </div>
     </div>
   );
@@ -275,6 +271,7 @@ const TOOL_LABELS: Record<string, string> = {
   dataset_import: "import data", dataset_add: "add rows", dataset_show: "look at data", dataset_edit: "edit dataset",
   dataset_label: "label with a teacher", dataset_eval: "evaluate", dataset_train: "train", dataset_promote: "gate",
   model_try: "try a model", datasets: "datasets", evals: "evals", status: "status", question: "ask you",
+  train_estimate: "estimate cost", project_status: "status",
 };
 
 function summary(t: NonNullable<Part["tool"]>) {
@@ -495,10 +492,10 @@ function Composer({ onSend, agent, setAgent, model, setModel, busy, autoFocus, p
   return (
     <div style={{ position: "relative" }}>
       {slash.length > 0 && (
-        <div className="card" style={{ position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 6, padding: 4, boxShadow: "var(--shadow)", zIndex: 5, maxWidth: 820, marginInline: "auto" }}>
+        <div className="slash">
           {slash.map((c, i) => (
             <div key={c.name} onMouseDown={(e) => { e.preventDefault(); setText(`/${c.name} `); ta.current?.focus(); }}
-              style={{ padding: "6px 10px", borderRadius: 6, cursor: "pointer", background: i === pick ? "var(--sunken)" : undefined }}>
+              className={i === pick ? "on" : ""}>
               <span className="mono">/{c.name}</span> <span className="muted small">{c.description}</span>
             </div>
           ))}
@@ -523,11 +520,11 @@ function Composer({ onSend, agent, setAgent, model, setModel, busy, autoFocus, p
           </select>
           <span className="grow" />
           <button className="btn primary sm" onClick={submit} disabled={!text.trim() || sending} title={busy ? "Send now (steers the running turn)" : "Send"}>
-            {sending ? <span className="spinner" /> : <Icon name="send" />} {busy ? "Steer" : "Send"}
+            {sending ? <span className="spinner" /> : null} {busy ? "steer" : "send ↵"}
           </button>
         </div>
       </div>
-      <div className="composer-hint">Enter to send · Shift+Enter for a new line · / for commands · nothing is spent or uploaded without asking you</div>
+      <div className="composer-hint">enter send · shift+enter newline · / commands</div>
     </div>
   );
 }
