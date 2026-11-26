@@ -80,3 +80,21 @@ The run also caught its own grader: a first regex accepted any option letter and
 model 100%; the agent noticed the score was implausible, wrote a `reward.py` that compares letters,
 and re-ran the baseline before training. (A regex with a capture group now compares what it
 captures with the reference.)
+
+### GSM8K with RL on Qwen3.5-0.8B, the whiteboard's first experiment (2026-11-27)
+
+The agent, asked to improve Qwen3.5-0.8B on GSM8K with RL under a $2 budget, imported 330 rows
+(241 to train, 89 sealed), checked the number grader on controls before spending, and measured
+the base model: **55.1% (49/89)** for $0.11. RL did not finish inside the budget, and the run is
+recorded here for what it taught the harness, not as a result:
+
+- the first RL launch failed at model load (Qwen3.5 is a vision-language checkpoint; the RL loop
+  now loads it the way SFT does);
+- the second was killed by a DNS drop on the laptop after $0.49 (Modal jobs now run detached and
+  are followed through a log on Modal);
+- the third ran on an A100 instead of the planned L40S and cost 1.7x its estimate, so the budget
+  guard stopped it at step 22 of 30 with the adapter lost (estimates now price the dearest GPU
+  Modal may pick, and a job out of budget now stops at its next step and keeps its adapter).
+
+Training reward over the 22 steps moved between 30% and 60% without a clear trend. A three-step
+RL smoke on the same model afterwards, with the fixes, ran end to end: reward 19% → 25%, $0.23.
