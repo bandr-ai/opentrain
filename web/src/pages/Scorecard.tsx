@@ -23,6 +23,10 @@ function picks(rows: ScoreRow[], base?: string): Pick[] {
   add(rows.find((r) => r.live), "live");
   add(rows.find((r) => r.kind === "version" && !r.live), "trained");
   if (base) add(rows.find((r) => r.kind === "model" && r.target.endsWith(base)), "base, untrained");
+  if (rows.length === 1) {
+    // one model measured: "best" and "cheapest" say nothing yet; keep only what it is
+    out[0].tag = out[0].tag.split(" · ").filter((t) => t !== "best" && t !== "cheapest at ~best").join(" · ") || "measured";
+  }
   return out.slice(0, 5);
 }
 
