@@ -91,13 +91,13 @@ def loop_gpu(model: str, method: str, teacher: str | None = None) -> list[str]:
 
 
 def gpu_seconds(spec: TrainSpec, rows: list[dict[str, Any]]) -> float:
-    """A rough duration. Throughputs are conservative rules of thumb for LoRA on one GPU (training
-    ~8k tokens/s for a 1B model, sampling ~2.5k tokens/s with vLLM in eager mode), scaled by model
-    size; startup is image + weights. Measured runs land well under it (docs/RECIPES.md)."""
+    """A rough duration. Throughputs are rules of thumb for LoRA on one GPU (training ~8k tokens/s
+    for a 1B model; sampling ~1.5k tokens/s with vLLM in eager mode with a LoRA, as measured on RL
+    runs), scaled by model size; startup is image + weights."""
     from .gpu_train import settings
 
     p = max(params_b(spec.base_model) or 8, 0.5)
-    train_tps, sample_tps = 8000 / p, 2500 / max(1.0, p / 2)
+    train_tps, sample_tps = 8000 / p, 1500 / max(1.0, p / 2)
     prompt = sum(len(json.dumps(r.get("messages", [])[:-1])) / 4 for r in rows) / max(1, len(rows))
     answer = sum(len(str(r.get("messages", [{}])[-1].get("content", ""))) / 4 for r in rows) / max(1, len(rows))
     if spec.method == "sft":
@@ -189,7 +189,8 @@ class ModalBackend:
     def estimate(self, spec: TrainSpec) -> float:
         """GPU seconds at list price, padded 20-30%: see ``gpu_seconds``. The job reports the real cost."""
         rows = _rows(spec.data)
-        gpu = spec.extra.get("gpu") or loop_gpu(spec.base_model, spec.method, spec.extra.get("teacher"))[0]
+        # Modal may run it on any GPU in the list: price the dearest, so the budget's hold covers the run
+        gpu = spec.extra.get("gpu") or loop_gpu(spec.base_model, spec.method, spec.extra.get("teacher"))
         pad = 1.2 if spec.method == "sft" else 1.3
         return round(gpu_seconds(spec, rows) * rate(gpu) * pad, 4)
 

@@ -473,7 +473,8 @@ def recipe_cost(ctx: ToolContext, name: str, r: dict[str, Any]) -> dict[str, Any
             if tf.trainer in ("modal", "runpod"):
                 from ...backends.modal_backend import _rows, gpu_seconds, loop_gpu
 
-                out["gpu"] = loop_gpu(spec.base_model, spec.method, spec.extra.get("teacher"))[0]
+                gpus = loop_gpu(spec.base_model, spec.method, spec.extra.get("teacher"))
+                out["gpu"] = " or ".join(gpus)  # priced at the dearest: whichever has capacity runs it
                 out["minutes"] = round(gpu_seconds(spec, _rows(data)) / 60 + (5 if tf.trainer == "runpod" else 0))
         except (ToolError, ValueError, RuntimeError) as exc:
             return {**out, "error": str(exc)}

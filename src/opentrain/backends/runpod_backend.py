@@ -268,9 +268,10 @@ class RunPodBackend:
     def estimate(self, spec: TrainSpec) -> float:
         from .modal_backend import _rows, gpu_seconds, loop_gpu
 
-        gpu = loop_gpu(spec.base_model, spec.method, spec.extra.get("teacher"))[0]
+        gpus = loop_gpu(spec.base_model, spec.method, spec.extra.get("teacher"))
         seconds = gpu_seconds(spec, _rows(spec.data)) + 300  # the 10 GB image pull, on top of Modal's startup
-        return round(seconds / 3600 * HOURLY.get(gpu, 2.0) * 1.3, 4)
+        # the pod lands on whichever GPU has capacity: price the dearest, so the budget's hold covers it
+        return round(seconds / 3600 * max(HOURLY.get(g, 2.0) for g in gpus) * 1.3, 4)
 
     def launch(self, spec: TrainSpec) -> str:
         from .modal_backend import loop_gpu
