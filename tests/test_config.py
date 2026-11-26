@@ -33,17 +33,17 @@ def test_command_expansion():
 def test_commands_run_in_a_session(live):
     c = live.client(live.proj)
     names = {x["name"] for x in c.get("/api/command")}
-    assert {"train", "status", "mine", "fix", "eval", "plan", "export"} <= names
+    assert {"train", "status", "data", "mine", "fix", "eval", "export"} <= names and "plan" not in names
     d = live.proj / ".opentrain" / "commands" / "team"
     d.mkdir(parents=True)
-    (d / "review.md").write_text("---\ndescription: review\nagent: plan\n---\nReview $ARGUMENTS carefully.\n")
+    (d / "review.md").write_text("---\ndescription: review\nagent: monitor\n---\nReview $ARGUMENTS carefully.\n")
     ScriptedProvider.register("cmd", [["reviewed"]])
     s = c.post("/api/session", {"model": "scripted/cmd"})
     c.post(f"/api/session/{s['id']}/command", {"name": "/team/review", "arguments": "the data"})
     c.post(f"/api/session/{s['id']}/wait", {"timeout": 20})
     msgs = c.get(f"/api/session/{s['id']}/message")
     assert msgs[0]["parts"][0]["text"] == "Review the data carefully."
-    assert c.get(f"/api/session/{s['id']}")["agent"] == "plan"
+    assert c.get(f"/api/session/{s['id']}")["agent"] == "monitor"
 
 
 def test_system_prompt_has_skills_and_instructions(live):

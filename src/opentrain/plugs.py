@@ -46,6 +46,8 @@ class JobStatus:
     progress: float | None = None
     detail: str = ""
     logs: list[str] = field(default_factory=list)
+    loss: float | None = None
+    """The latest training loss, when the backend reports one (drawn as a curve by clients)."""
 
     @property
     def done(self) -> bool:

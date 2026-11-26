@@ -207,7 +207,7 @@ class Server:
         launched = self._job_event(job_id)
         st = get_backend(launched["backend"], self.state).status(job_id)
         out: dict[str, Any] = {"state": st.state, "progress": st.progress, "cost_usd": st.cost_usd,
-                               "detail": st.detail, "logs": st.logs[-10:]}
+                               "detail": st.detail, "logs": st.logs[-10:], "loss": st.loss}
         if not st.done and st.cost_usd > launched["estimate_usd"] + self.ledger.remaining(self.run.run_id):
             get_backend(launched["backend"], self.state).cancel(job_id)
             out["cancelled"] = "over budget"

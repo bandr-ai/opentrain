@@ -178,6 +178,12 @@ class Jobs:
         st = srv.t_train_status(j["backend_job"])
         patch: dict[str, Any] = {"progress": st.get("progress"), "detail": st.get("detail") or "",
                                  "cost_usd": st.get("cost_usd", 0.0)}
+        if isinstance(st.get("loss"), (int, float)):  # a curve for clients: (progress, loss), at most 200 points
+            curve = list(j.get("curve") or [])
+            point = [st.get("progress") or 0.0, st["loss"]]
+            if not curve or curve[-1] != point:
+                curve = (curve + [point])[-200:]
+            patch.update(loss=st["loss"], curve=curve)
         if st["state"] in TERMINAL:
             patch.update(state=st["state"], version=st.get("version"), time={"ended": _now()},
                          error=None if st["state"] == "succeeded" else (st.get("detail") or st["state"]))

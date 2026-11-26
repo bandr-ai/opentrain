@@ -123,6 +123,25 @@ def init(ctx: ToolContext, goal: str = "better than the current model on my held
     return ToolResult(f"Wrote {path}:\n\n{text}", title="Trainfile")
 
 
+def goal_set(ctx: ToolContext, goal: str) -> ToolResult:
+    """Only the goal line: the user's words for what the model should get better at. Budget and gate stay."""
+    from ... import trainfile
+
+    goal = " ".join(goal.split())
+    if not goal:
+        raise ToolError("say the goal in words")
+    path = ctx.project.directory / "Trainfile"
+    text = path.read_text() if path.exists() else trainfile.DEFAULT
+    lines = text.splitlines()
+    if any(ln.split("  ")[0].strip() == "goal" for ln in lines):
+        text = "\n".join(f"{'goal':<12} {goal}" if ln.split("  ")[0].strip() == "goal" else ln for ln in lines) + "\n"
+    else:
+        text = f"{'goal':<12} {goal}\n" + text
+    trainfile.parse(text)
+    path.write_text(text)
+    return ToolResult(f"Goal set: {goal}", title="goal")
+
+
 def backends(ctx: ToolContext) -> Any:
     from ...backends import list_backends
 
@@ -432,6 +451,9 @@ def tools() -> list[Tool]:
                                                       "(or speed/fix/cost for coding-session work)"}, "budget": {"type": "string"},
              "trainer": {"type": "string"}, "base_model": {"type": "string"}, "heldout": {"type": "string"}}),
           init, permission=lambda a: [("write", "Trainfile")]),
+        T("goal_set", "Set the Trainfile's goal: what the model should get better at, in the user's words. Changes "
+          "only the goal line; creates the Trainfile with defaults when there is none.",
+          S({"goal": {"type": "string"}}, ["goal"]), goal_set, title=lambda a: a["goal"][:60]),
         T("backends", "Trainer backends and whether each can run here.", S(), backends),
         T("record_query", "Past runs: triggers, data, recipes, spend, scores, gate decisions.",
           S({"run_id": {"type": "string"}, "last": {"type": "integer"}}), record_query),

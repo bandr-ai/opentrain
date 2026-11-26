@@ -121,6 +121,9 @@ class Permissions:
                 need.append(r)
         if not need:
             return
+        props = self.project.services.get("proposals")
+        if props is not None and props.granted(ctx.session_id, action, metadata):
+            return  # the user approved the step this belongs to
         req = self.store.create("permission", {
             "session_id": ctx.session_id, "message_id": ctx.message_id, "call_id": ctx.call_id,
             "agent": ctx.agent.name, "action": action, "resources": need, "metadata": metadata,

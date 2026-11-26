@@ -12,7 +12,8 @@ import time
 
 ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 PREFIXES = {"session": "ses", "message": "msg", "part": "prt", "event": "evt", "job": "job",
-            "permission": "per", "inbox": "inb", "run": "run", "question": "qst", "credential": "crd"}
+            "permission": "per", "inbox": "inb", "run": "run", "question": "qst", "credential": "crd",
+            "proposal": "prp"}
 
 _lock = threading.Lock()
 _last = 0

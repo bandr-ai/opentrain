@@ -266,7 +266,7 @@ class Agents:
 
     def list(self) -> list[Agent]:
         self._fresh()
-        order = {"train": 0, "plan": 1, "data": 2, "monitor": 3, "evaluator": 9}
+        order = {"train": 0, "data": 2, "monitor": 3, "evaluator": 9}
         return sorted(self.agents.values(), key=lambda a: (order.get(a.name, 5), a.name))
 
     def primaries(self) -> list[Agent]:

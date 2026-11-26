@@ -67,21 +67,72 @@ def test_ask_once_reject_and_always(live):
     assert _tools(c2, s2["id"])[0]["state"] == "completed"
 
 
-def test_plan_agent_cannot_spend_or_write_outside_plans(live):
-    p = live.hub.project(live.proj)
-    plan = p.services["agents"].get("plan")
-    perms = p.services["permissions"]
-    visible = {t.name for t in p.services["runner"].tools_for(plan)}
-    assert {"status", "train_estimate", "read", "write", "question"} <= visible
-    assert not ({"job_start", "sample_run", "tasks_mine", "version_propose", "edit_x"} & visible)
-    assert perms.effect(plan, None, "write", ".opentrain/plans/a.md") == "allow"
-    assert perms.effect(plan, None, "write", "src/a.py") == "deny"
-    c, s = _start(live, "p2", [[{"tool": "write", "input": {"path": "src/a.py", "content": "x"}}],
-                               [{"tool": "job_start", "input": {}}], ["done"]], agent="plan")
+def _proposal(c, n=1):
+    for _ in range(100):
+        p = c.get("/api/proposal")
+        if len(p) >= n:
+            return p
+        time.sleep(0.05)
+    raise AssertionError("no proposal appeared")
+
+
+def _dataset(c, name="pp"):
+    import json
+
+    content = "".join(json.dumps({"question": f"q{i}", "answer": "done"}) + "\n" for i in range(20))
+    c.post(f"/api/dataset/{name}/upload", {"filename": "x.jsonl", "content": content})
+    c.patch(f"/api/dataset/{name}", {"grader": {"type": "exact"}})
+
+
+def test_an_approved_step_covers_its_gated_actions(live):
+    c = live.client(live.proj)
+    _dataset(c)
+    ScriptedProvider.register("pp-eval", [])
+    step = {"title": "Evaluate pp-eval on pp", "why": "baseline", "cost_usd": 0.01, "minutes": 1,
+            "needs": ["spend"], "stage": "baseline", "dataset": "pp"}
+    c, s = _start(live, "pp1", [[{"tool": "propose", "input": step}],
+                                [{"tool": "dataset_eval", "input": {"name": "pp", "model": "scripted/pp-eval"}}],
+                                ["done"]])
+    prop = _proposal(c)[0]
+    assert prop["title"] == step["title"] and prop["needs"] == ["spend"] and prop["cost_usd"] == 0.01
+    assert c.get(f"/api/session/{s['id']}")["status"] in ("waiting", "busy")
+    board = c.get("/api/board")
+    assert board["proposals"][0]["id"] == prop["id"] and board["dataset"] == "pp"
+    with pytest.raises(Exception):
+        c.post(f"/api/session/{s['id']}/proposal/{prop['id']}/reply", {"reply": "change"})  # needs a message
+    c.post(f"/api/session/{s['id']}/proposal/{prop['id']}/reply", {"reply": "approve"})
     tools = _tools(c, s["id"])
-    assert tools[0]["state"] == "error" and "not allowed for the plan agent" in tools[0]["error"]
-    assert tools[1]["state"] == "error" and "may not use job_start" in tools[1]["error"]
-    assert not (live.proj / "src" / "a.py").exists()
+    assert [t["state"] for t in tools] == ["completed", "completed"]
+    assert "Approved" in tools[0]["output"]
+    assert c.get("/api/permission") == []  # the spend did not ask again
+
+
+def test_a_skipped_step_is_not_done_and_ungranted_actions_still_ask(live):
+    c = live.client(live.proj)
+    _dataset(c, "pq")
+    ScriptedProvider.register("pq-eval", [])
+    c, s = _start(live, "pq1", [[{"tool": "propose", "input": {"title": "Train on pq", "needs": ["job.start"]}}],
+                                ["ok, skipped"]])
+    prop = _proposal(c)[0]
+    c.post(f"/api/session/{s['id']}/proposal/{prop['id']}/reply", {"reply": "skip"})
+    tools = _tools(c, s["id"])
+    assert tools[0]["state"] == "error" and "skipped" in tools[0]["error"]
+    # approving a step that needs only job.start does not cover spend
+    c, s = _start(live, "pq2", [[{"tool": "propose", "input": {"title": "x", "needs": ["job.start"]}}],
+                                [{"tool": "dataset_eval", "input": {"name": "pq", "model": "scripted/pq-eval"}}],
+                                ["done"]])
+    prop = _proposal(c)[0]
+    c.post(f"/api/session/{s['id']}/proposal/{prop['id']}/reply", {"reply": "approve"})
+    req = _pending(c)[0]
+    assert req["action"] == "spend"
+    c.post(f"/api/session/{s['id']}/permission/{req['id']}/reply", {"reply": "reject"})
+    _tools(c, s["id"])
+
+
+def test_propose_refuses_ungrantable_needs(live):
+    c, s = _start(live, "pr1", [[{"tool": "propose", "input": {"title": "x", "needs": ["shell"]}}], ["done"]])
+    t = _tools(c, s["id"])[0]
+    assert t["state"] == "error" and "still ask on their own" in t["error"]
 
 
 def test_unattended_sessions_never_wait(live):

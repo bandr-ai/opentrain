@@ -88,6 +88,21 @@ async def questions(request: web.Request):
     return ok(project_of(request).services["questions"].pending(request.query.get("session")))
 
 
+@routes.post("/api/session/{sid}/proposal/{pid}/reply")
+async def proposal_reply(request: web.Request):
+    b = await body_of(request)
+    ps = project_of(request).services["proposals"]
+    try:
+        return ok(ps.reply(request.match_info["pid"], str(b.get("reply") or ""), b.get("message")))
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from None
+
+
+@routes.get("/api/proposal")
+async def proposals(request: web.Request):
+    return ok(project_of(request).services["proposals"].pending(request.query.get("session")))
+
+
 @routes.get("/api/job")
 async def jobs(request: web.Request):
     return ok(project_of(request).services["jobs"].list(request.query.get("session"),

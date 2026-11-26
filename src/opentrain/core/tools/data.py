@@ -238,6 +238,7 @@ def dataset_eval(ctx: ToolContext, name: str, model: str, limit: int | None = No
 
     job = ctx.project.services["jobs"].start_local(ctx.session_id, "eval", f"eval {model} on {name}", work,
                                                    summarize=summary)
+    ctx.project.store.update("job", job["id"], {"dataset": name, "target": model, "split": split})
     return ToolResult(f"Started job {job['id']} (evaluating {model} on {name}, {split}). You will get a system "
                       "reminder with the score when it ends. Do not poll.", title=f"eval {model}",
                       metadata={"job_id": job["id"]})

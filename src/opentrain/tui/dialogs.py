@@ -139,7 +139,9 @@ class QuestionScreen(ModalScreen[list[list[str]] | None]):
             yield Static("", classes="title", id="qtitle")
             yield OptionList(id="single")
             yield SelectionList(id="multi")
-            yield Static("enter to answer · space to tick (several allowed) · esc to dismiss", classes="help")
+            yield Input(placeholder="or type your own answer and press enter", id="other")
+            yield Static("enter to answer · space to tick (several allowed) · tab to type · esc to dismiss",
+                         classes="help")
 
     def on_mount(self) -> None:
         self._show()
@@ -172,6 +174,12 @@ class QuestionScreen(ModalScreen[list[list[str]] | None]):
     @on(OptionList.OptionSelected, "#single")
     def _picked(self, event: OptionList.OptionSelected) -> None:
         self._next([self.questions[self.index]["options"][int(event.option.id)]])
+
+    @on(Input.Submitted, "#other")
+    def _typed(self, event: Input.Submitted) -> None:
+        if event.value.strip():
+            event.input.value = ""
+            self._next([event.value.strip()])
 
     def on_key(self, event: Any) -> None:
         if event.key == "enter" and self.query_one("#multi", SelectionList).has_focus:

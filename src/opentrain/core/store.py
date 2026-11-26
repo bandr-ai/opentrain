@@ -29,7 +29,7 @@ from typing import Any, Callable, Iterator
 from . import ids
 
 GENESIS = "0" * 64
-PROJECTED = ("session", "message", "part", "inbox", "job", "todo", "approval", "question", "permission")
+PROJECTED = ("session", "message", "part", "inbox", "job", "todo", "approval", "question", "permission", "proposal")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS event (

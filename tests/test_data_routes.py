@@ -116,3 +116,29 @@ def test_web_app_is_served(live):
     with pytest.raises(urllib.error.HTTPError) as e:
         urllib.request.urlopen(live.url + "/api/dataset")
     assert e.value.code == 401
+
+
+def test_board_walks_the_loop(live):
+    c = live.client(live.proj)
+    b = c.get("/api/board")
+    assert b["current"] == "goal" and b["dataset"] is None and [s["key"] for s in b["stages"]] == \
+        ["goal", "data", "grade", "baseline", "train", "prove", "ship"]
+    (live.proj / "Trainfile").write_text("goal  sort tickets into four labels\n")
+    content = "".join(json.dumps({"question": f"q{i}", "answer": "done"}) + "\n" for i in range(30))
+    c.post("/api/dataset/bd/upload", {"filename": "bd.jsonl", "content": content})
+    c.patch("/api/dataset/bd", {"grader": {"type": "exact"}})
+    b = c.get("/api/board")
+    st = {s["key"]: s for s in b["stages"]}
+    assert st["goal"]["state"] == "done" and st["goal"]["summary"] == "sort tickets into four labels"
+    assert st["data"]["state"] == "done" and b["current"] == "baseline" and b["budget"]["limit_usd"] > 0
+    ScriptedProvider.register("bd-good", [])
+    c.post("/api/dataset/bd/eval", {"model": "scripted/bd-good"})
+    _wait_job(c)
+    b = c.get("/api/board")
+    assert b["scoreboard"][0]["target"] == "scripted/bd-good" and b["scoreboard"][0]["score"] == 1.0
+    assert b["current"] == "train"
+    g = c.get("/api/board/grid", dataset="bd")
+    assert g["rows"] and "prompt" not in g["rows"][0] and g["columns"][0]["target"] == "scripted/bd-good"
+    g = c.get("/api/board/grid", dataset="bd", reveal="1")
+    r = g["rows"][0]
+    assert r["prompt"].startswith("q") and r["reference"] == "done" and r["cells"]["scripted/bd-good"]["answer"]

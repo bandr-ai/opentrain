@@ -180,6 +180,7 @@ async def start_eval(request: web.Request):
         return {"eval": rec["id"], "model": model, "dataset": name, "split": split, **rec["summary"]}
 
     job = p.services["jobs"].start_local(b.get("session_id"), "eval", f"eval {model} on {name}", work)
+    job = p.store.update("job", job["id"], {"dataset": name, "target": model, "split": split}) or job
     return ok(job, 202)
 
 
@@ -273,3 +274,32 @@ async def promote(request: web.Request):
     if d["promote"]:
         reg.promote(version, f"beat {base} on {v.dataset} (web)")
     return ok(d)
+
+
+# ---------------------------------------------------------------------- the board
+
+
+@routes.get("/api/board")
+async def board_view(request: web.Request):
+    from ..board import board
+
+    p = project_of(request)
+    jobs = p.services["jobs"].list() if "jobs" in p.services else []
+    props = p.services["proposals"].pending() if "proposals" in p.services else []
+    return ok(await asyncio.to_thread(board, p.state, p.directory, dataset=request.query.get("dataset"), jobs=jobs,
+                                      proposals=props))
+
+
+@routes.get("/api/board/grid")
+async def board_grid(request: web.Request):
+    from ..board import grid
+    from ..datasets import DatasetError
+
+    p = project_of(request)
+    name = request.query.get("dataset")
+    if not name:
+        raise ApiError(400, "dataset is required")
+    try:
+        return ok(await asyncio.to_thread(grid, p.state, name, reveal=request.query.get("reveal") == "1"))
+    except DatasetError as exc:
+        raise ApiError(404, str(exc)) from None

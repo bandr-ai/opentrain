@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..proposals import GRANTABLE, propose_tool
 from ..tool import Tool, ToolContext, ToolError, ToolResult, schema
 from .paths import guard, rel, resolve, sealed
 
@@ -338,6 +339,21 @@ def tools() -> list[Tool]:
                  "question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}},
                  "multiple": {"type": "boolean"}}, "required": ["question", "options"]}}}, ["questions"]),
              _question),
+        Tool("propose", "Propose the next step and wait for the user to approve, change or skip it. Use this for "
+             "anything that costs money, sends data out, trains or changes what is live: one step at a time, with "
+             "what it is, why, the cost and how long. Approving grants the gated actions listed in needs for this step "
+             "only, so the user is not asked again for each of them.",
+             schema({"title": {"type": "string", "description": "the step, imperative and short: 'Evaluate v2 on "
+                                                                   "the 24 held-out rows'"},
+                     "why": {"type": "string", "description": "one or two sentences: why this is the next step"},
+                     "cost_usd": {"type": "number", "description": "estimated spend in dollars (0 if free)"},
+                     "minutes": {"type": "number", "description": "rough wall time"},
+                     "needs": {"type": "array", "items": {"type": "string", "enum": list(GRANTABLE)},
+                               "description": "gated actions this step will take"},
+                     "stage": {"type": "string", "enum": ["goal", "data", "grade", "baseline", "train", "prove",
+                                                          "ship"]},
+                     "dataset": {"type": "string"}}, ["title"]),
+             propose_tool, title=lambda a: a["title"]),
         Tool("skill", "Load a recipe (skill) by name, e.g. goal/speed, data/shortest, train/sft, cl/mine, "
              "bandits/certify. Read it before running that recipe.",
              schema({"name": {"type": "string"}}, ["name"]), _skill, title=lambda a: a["name"]),

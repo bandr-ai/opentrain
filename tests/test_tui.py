@@ -78,14 +78,10 @@ async def test_question_modal(live):
 
 
 @pytest.mark.asyncio
-async def test_tab_switches_agent_and_models_picker(live):
+async def test_one_agent_and_models_picker(live):
     app = _app(live)
     async with app.run_test(size=(140, 45)) as pilot:
         await settle(pilot, lambda: app.agents)
-        assert app.agent == "train"
-        await pilot.press("tab")
-        assert app.agent == "plan"
-        await pilot.press("tab")
         assert app.agent == "train"
         await pilot.press("ctrl+o")
         await settle(pilot, lambda: isinstance(app.screen, PickerScreen))

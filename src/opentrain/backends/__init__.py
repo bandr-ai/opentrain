@@ -169,7 +169,8 @@ class JobStore:
                                   detail=f"worker (pid {job['pid']}) exited without reporting; see job logs {jid}")
         return JobStatus(job_id=jid, state=job["state"], cost_usd=float(job.get("cost_usd") or 0.0),
                          checkpoint=job.get("checkpoint"), progress=job.get("progress"),
-                         detail=job.get("detail") or "", logs=self.logs(jid, tail=20))
+                         detail=job.get("detail") or "", logs=self.logs(jid, tail=20),
+                         loss=job.get("loss") if isinstance(job.get("loss"), (int, float)) else None)
 
     def spawn(self, module: str, job_id: str) -> int:
         """Start ``python -m <module> <job.json>`` detached, so the job survives this process exiting.

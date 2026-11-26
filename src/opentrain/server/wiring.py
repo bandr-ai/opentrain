@@ -33,6 +33,9 @@ def _engine(hub: Hub, p: Project) -> None:
     from ..core.permission import BudgetHook, Permissions
 
     p.services["questions"] = Questions(p)
+    from ..core.proposals import Proposals
+
+    p.services["proposals"] = Proposals(p)
     p.services["permissions"] = Permissions(p)
     p.services["runner"] = Runner(p, hub.loop)
     p.services["runner"].on_usage.append(BudgetHook(p))

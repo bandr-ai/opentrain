@@ -4,7 +4,7 @@ A client of the server: everything it shows comes from the API and the event str
 action is a request. Close it and jobs keep running; open it again and it picks up where the
 session is.
 
-Keys: enter sends · ctrl+j new line · tab switches agent (train ⇄ plan) · esc interrupts ·
+Keys: enter sends · ctrl+j new line · esc interrupts ·
 ctrl+p commands · ctrl+o models · ctrl+n new session · ctrl+l sessions · ctrl+b sidebar ·
 ctrl+c quits.
 """
@@ -54,14 +54,13 @@ LOCAL_COMMANDS = {
 HELP = """\
 # OpenTrain
 
-You talk to the **train** agent; it turns your agent sessions into verified tasks, trains a model on
-them, and ships a version only when it beats the current one on held-out work. **plan** thinks
-without spending anything (tab switches).
+You talk to one agent. Tell it what the model should get better at; it gets the data, sets up
+grading, measures a baseline, trains, and ships a version only when it beats the baseline on
+held-out examples. Anything that costs money or changes what is live, it proposes first.
 
 | Key | Does |
 | --- | --- |
 | enter / ctrl+j | send / new line |
-| tab | switch agent (train ⇄ plan) |
 | esc | interrupt the running turn |
 | ctrl+p | commands |
 | ctrl+o | models |
@@ -69,10 +68,10 @@ without spending anything (tab switches).
 | ctrl+b | sidebar |
 | ctrl+c | quit (jobs keep running) |
 
-When the agent wants to spend money, upload data, launch training, promote a version or run a
-command, it asks: **1** allow once, **2** always, **3** reject.
+Each costly step comes as a proposal with its cost: **1** approve, **2** change, **3** skip. A
+command it wants to run asks: **1** allow once, **2** always, **3** reject.
 
-Commands: `/train` `/status` `/mine` `/fix <what is wrong>` `/eval <version>` `/plan` `/export`,
+Commands: `/train` `/status` `/data` `/mine` `/fix <what is wrong>` `/eval <version>` `/export`,
 and `/models` `/connect` `/trainer` `/agents` `/sessions` `/new` `/jobs` `/versions` `/help`.
 """
 
@@ -177,7 +176,6 @@ class OpenTrainApp(App):
     BINDINGS = [
         Binding("ctrl+c", "quit", "quit", priority=True),
         Binding("escape", "interrupt", "interrupt"),
-        Binding("tab", "cycle_agent", "agent", priority=True),
         Binding("ctrl+p", "palette", "commands", priority=True),
         Binding("ctrl+o", "models", "models", priority=True),
         Binding("ctrl+n", "new_session", "new", priority=True),
@@ -277,7 +275,7 @@ class OpenTrainApp(App):
 
     def _hints(self) -> None:
         busy = self.status_text != "idle"
-        t = Text("enter send · ctrl+j newline · tab agent · ctrl+p commands · ctrl+o models · ", style="dim")
+        t = Text("enter send · ctrl+j newline · ctrl+p commands · ctrl+o models · ", style="dim")
         t.append("esc interrupt" if busy else "ctrl+l sessions", style="bold" if busy else "dim")
         t.append(f" · v{__version__}", style="dim")
         self.query_one("#hints", Static).update(t)
@@ -369,13 +367,12 @@ class OpenTrainApp(App):
         t.append(f"\n  The open harness for training models · v{__version__}\n\n", style="dim")
         t.append(f"  {self.directory}\n\n", style="bold")
         t.append("  Try\n", style="bold dim")
-        for line in ("make me a model that does my routine work faster",
+        for line in ("a small model that sorts our support tickets, from tickets.csv",
                      "/status    what is live, what it cost, how the last run went",
-                     "/mine      turn my agent sessions into verified tasks",
-                     "/train     run the goal end to end (asks before spending)",
-                     "/plan      think it through without spending anything"):
+                     "/data      bring in or build a dataset",
+                     "/train     run the goal end to end (proposes each costly step)"):
             t.append(f"    {line}\n")
-        t.append("\n  tab switches train ⇄ plan · ctrl+o model · /connect keys · /trainer base model\n", style="dim")
+        t.append("\n  ctrl+o model · /connect keys · /trainer base model\n", style="dim")
         try:
             sessions = await self.client.get("/api/session") if self.client else []
         except ClientError:
@@ -417,6 +414,8 @@ class OpenTrainApp(App):
             self.query_one(PermissionPrompt).show(req)
         for q in await self.client.get("/api/question", session=sid):
             self._ask_question(q)
+        for prop in await self.client.get("/api/proposal", session=sid):
+            self._ask_proposal(prop)
 
     async def ensure_session(self) -> str:
         if self.session_id:
@@ -571,6 +570,9 @@ class OpenTrainApp(App):
         if typ == "question.created" and mine:
             self._ask_question(data)
             return
+        if typ == "proposal.created" and mine and data.get("status") == "pending":
+            self._ask_proposal(data)
+            return
         if typ in ("todo.created", "todo.updated") and mine:
             self.todos = data.get("todos") or []
             self._sidebar()
@@ -587,6 +589,31 @@ class OpenTrainApp(App):
 
         self.bell()
         self.push_screen(QuestionScreen(q["questions"]), answered)
+
+    def _ask_proposal(self, prop: dict[str, Any]) -> None:
+        """A proposed step: approve, skip, or type what to change."""
+        async def answered(answers: list[list[str]] | None) -> None:
+            if not self.client or not self.session_id:
+                return
+            pick = (answers or [[]])[0]
+            choice = pick[0] if pick else "Skip"
+            if choice.startswith("Approve"):
+                body: dict[str, Any] = {"reply": "approve"}
+            elif choice == "Skip":
+                body = {"reply": "skip"}
+            else:
+                body = {"reply": "change", "message": choice}
+            try:
+                await self.client.post(f"/api/session/{self.session_id}/proposal/{prop['id']}/reply", body)
+            except ClientError as exc:
+                self.notify(exc.message, severity="warning")
+
+        cost = f"~{money(prop['cost_usd'])}" if prop.get("cost_usd") else "free"
+        mins = f" · ~{prop['minutes']:g} min" if prop.get("minutes") else ""
+        text = f"Next: {prop['title']}\n{prop.get('why') or ''}\n({cost}{mins})".strip()
+        self.bell()
+        self.push_screen(QuestionScreen([{"question": text + "\n\nType below to change it.",
+                                          "options": [f"Approve ({cost})", "Skip"]}]), answered)
 
     @on(PermissionPrompt.Replied)
     async def _permission_replied(self, event: PermissionPrompt.Replied) -> None:
