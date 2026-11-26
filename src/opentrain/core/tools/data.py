@@ -55,8 +55,11 @@ def summarize(state: Path, name: str) -> dict[str, Any]:
     evs = [e for e in list_evals(state, name) if e["split"] == "heldout"]
     best: dict[str, Any] = {}
     for e in evs:  # newest first: keep the latest per target
-        best.setdefault(e["target"], {"eval": e["id"], "score": e["summary"]["mean_score"],
-                                      "pass_rate": e["summary"]["pass_rate"], "rows": e["summary"]["rows"]})
+        sm = e["summary"]
+        best.setdefault(e["target"], {"eval": e["id"], "score": sm["mean_score"], "pass_rate": sm["pass_rate"],
+                                      "rows": sm["rows"], "median_seconds": sm.get("median_seconds"),
+                                      "cost_per_1k_usd": round((sm.get("cost_usd") or 0.0) / max(1, sm["rows"]) * 1000,
+                                                               4)})
     return {"name": name, "description": m.get("description"), "counts": m.get("counts"),
             "grader": describe(m.get("grader") or {"type": "judge"}), "system": (m.get("system") or "")[:300],
             "sources": [{k: v for k, v in s.items() if k != "time"} for s in m.get("sources", [])][-5:],
@@ -288,12 +291,34 @@ async def dataset_train(ctx: ToolContext, name: str, epochs: int | None = None, 
     from .train import job_start
 
     manifest = await asyncio.to_thread(build_training_set, ctx, name)
+    r = recipe_for(ctx, name)
+    epochs = epochs or r["epochs"]
+    lora_rank = lora_rank or r["lora_rank"]
+    learning_rate = learning_rate or r["learning_rate"]
     res = await job_start(ctx, epochs, lora_rank, learning_rate)
     jid = res.metadata.get("job_id")
     if jid:
-        ctx.project.store.update("job", jid, {"dataset": name, "title": f"train on {name}"})
-    res.output = f"{manifest['examples']} examples from {name}. " + res.output
+        ctx.project.store.update("job", jid, {"dataset": name, "title": f"train on {name}",
+                                              "recipe": {**r, "epochs": epochs, "lora_rank": lora_rank,
+                                                         "learning_rate": learning_rate}})
+    res.output = (f"{manifest['examples']} examples from {name}; recipe: {r['why']} (used: rank {lora_rank}, "
+                  f"lr {learning_rate:g}, {epochs} epochs). " + res.output)
     return res
+
+
+def recipe_for(ctx: ToolContext, name: str) -> dict[str, Any]:
+    from ...datasets import reference_of
+    from ...recipes import recipe, task_kind
+
+    ds = _ds(ctx)
+    rows = _err(ds.rows)(name)
+    refs = [reference_of(r) for r in rows]
+    kind = task_kind(ds.meta(name).get("grader"), [x for x in refs if x])
+    return recipe(kind, len(rows), _tf(ctx).base_model, labelled=sum(1 for x in refs if x))
+
+
+def dataset_recipe(ctx: ToolContext, name: str) -> Any:
+    return recipe_for(ctx, name)
 
 
 def dataset_promote(ctx: ToolContext, version: str, baseline: str | None = None) -> Any:
@@ -325,6 +350,10 @@ def tools() -> list[Tool]:
     T = lambda *a, **k: Tool(*a, group="data", **k)  # noqa: E731
     obj = {"type": "object"}
     return [
+        T("dataset_recipe", "The tested training recipe for a dataset: task kind, LoRA settings, what to do first "
+          "(distil missing answers) and what to try if the run does not beat the baseline. dataset_train applies it "
+          "by default; read it before proposing a training run.", S({"name": {"type": "string"}}, ["name"]),
+          dataset_recipe),
         T("datasets", "Every dataset: rows (training, held out, labelled), how answers are graded, latest scores per "
           "model.", S(), datasets_list),
         T("dataset_show", "Training rows of a dataset (held-out rows are sealed).",
