@@ -183,3 +183,52 @@ def test_a_fireworks_version_is_answered_by_the_sampler(tmp_path, monkeypatch):
     monkeypatch.setattr(fireworks, "sample", lambda ck, base, msgs, **kw: ("<think>\n</think>\n\nbug", 30, 3, 0.0001))
     c = cm._fireworks(v, [{"role": "user", "content": "x"}], 16, 30, 0.0)
     assert c.text == "bug" and c.cost == 0.0001 and c.output_tokens == 3
+
+
+def test_rl_samples_grades_and_trains_with_importance_sampling(sdk, data, tmp_path, monkeypatch):
+    """GRPO on the Training API: a snapshot per step, samples graded here, advantages around the group
+    mean, the sampler's logprobs as the anchor, one optimizer step per batch."""
+    mod = sys.modules["fireworks.training.sdk"]
+
+    class Tok(CharTokenizer):
+        eos_token_id = 0
+
+        def encode(self, text, add_special_tokens=False):
+            return [ord(c) for c in text]
+
+    sys.modules["transformers"].AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda name: Tok())
+    answers = iter(["billing", "bug"] * 1000)
+
+    class Sampler:
+        def sample(self, prompt, num_samples, sampling_params):
+            seqs = [types.SimpleNamespace(tokens=[ord(c) for c in next(answers)], logprobs=None)
+                    for _ in range(num_samples)]
+            return Future(types.SimpleNamespace(sequences=[
+                types.SimpleNamespace(tokens=q.tokens, logprobs=[-0.5] * len(q.tokens)) for q in seqs]))
+
+    service = mod.FiretitanServiceClient
+    service.create_sampling_client = lambda self, model_path, base_model: sdk.append(("sampler", model_path)) or Sampler()
+    training_cls = type(service("k", "u").create_lora_training_client("b", 8))
+    training_cls.optim_step = lambda self, adam, grad_accumulation_normalization=None: (
+        sdk.append(("opt", adam.learning_rate, grad_accumulation_normalization)) or Future(None))
+    mod.SamplingParams = lambda max_tokens, temperature: (max_tokens, temperature)
+    mod.GradAccNormalization = types.SimpleNamespace(NUM_LOSS_TOKENS="num_loss_tokens")
+    store = JobStore(tmp_path)
+    spec = TrainSpec(base_model="qwen3p6-35b-a3b", data=data, method="rl", lora_rank=8, learning_rate=4e-5,
+                     extra={"steps": 2, "prompts_per_step": 2, "samples": 2, "max_new_tokens": 8,
+                            "grader": {"type": "exact"}})
+    job = store.new("fireworks", spec, usd_per_mtok=2.14, usd_per_mtok_sample=1.335, fireworks_model="qwen3p6-35b-a3b",
+                    tokenizer="t")
+    fireworks_worker.run(store, store.load(job["job_id"]))
+    j = store.load(job["job_id"])
+    assert j["state"] == "succeeded" and j["checkpoint"].startswith("fireworks-sampler://")
+    fb = [c for c in sdk if c[0] == "fb"]
+    assert fb and all(c[2] == "importance_sampling" for c in fb)
+    assert ("opt", 4e-5, "num_loss_tokens") in sdk
+    assert sum(1 for c in sdk if c[0] == "sampler") == 2  # a fresh snapshot per step
+    assert 0 <= j["reward"] <= 1 and j["cost_usd"] > 0 and sdk[-2:] == [("delete",), ("close",)]
+
+
+def test_opd_is_refused_on_fireworks(data):
+    with pytest.raises(ValueError, match="modal or runpod"):
+        fireworks.FireworksBackend.estimate(None, TrainSpec(base_model="qwen3p6-35b-a3b", data=data, method="opd"))

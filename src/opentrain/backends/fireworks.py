@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from ..plugs import JobStatus, TrainSpec
-from . import JobStore
+from . import JobStore, only_methods
 
 WORKER = "opentrain.backends.fireworks_worker"
 SAMPLER = "opentrain.backends.fireworks_sampler"
@@ -61,6 +61,23 @@ ALIASES = {tok.lower(): fid for fid, (tok, _, _) in MODELS.items()}
 CHARS_PER_TOKEN = 3.0
 """Pre-launch estimate only; the worker reports cost from real token counts. Low end, so the budget
 is over- rather than under-reserved."""
+
+
+def loop_estimate(spec: TrainSpec, train: float, sample: float) -> float:
+    """Tokens sampled and trained by rejection sampling or RL, at Fireworks' prices, padded 30%."""
+    from .gpu_train import settings
+
+    s = settings({"method": spec.method, "extra": spec.extra})
+    rows = [ln for ln in Path(spec.data).read_text().splitlines() if ln.strip()]
+    prompt = sum(len(ln) for ln in rows) / max(1, len(rows)) / CHARS_PER_TOKEN
+    gen = int(s["max_new_tokens"]) * 0.6
+    if spec.method == "rejection":
+        n = len(rows) * int(s["samples"]) * int(s["rounds"])
+        trained = len(rows) * int(s["keep"]) * int(s["rounds"])
+    else:
+        n = trained = int(s["steps"]) * int(s["prompts_per_step"]) * int(s["samples"])
+    usd = (n * (prompt + gen) * sample + trained * (prompt + gen) * train) / 1e6
+    return round(usd * 1.3, 4)
 
 
 class FireworksError(RuntimeError):
@@ -138,7 +155,10 @@ class FireworksBackend:
                       + "; small models need trainer modal")
 
     def estimate(self, spec: TrainSpec) -> float:
-        _, train, _ = MODELS[model_id(spec.base_model)]
+        only_methods("fireworks", spec, ("sft", "rejection", "rl"))
+        _, train, sample = MODELS[model_id(spec.base_model)]
+        if spec.method != "sft":
+            return loop_estimate(spec, train, sample)
         tokens = 0
         for line in Path(spec.data).read_text().splitlines():
             if line.strip():
@@ -153,7 +173,8 @@ class FireworksBackend:
             raise FileNotFoundError(f"training data {spec.data} does not exist")
         fid = model_id(spec.base_model)
         tok, train, sample = MODELS[fid]
-        job = self.store.new(self.name, spec, usd_per_mtok=train, fireworks_model=fid, tokenizer=tok,
+        job = self.store.new(self.name, spec, usd_per_mtok=train, usd_per_mtok_sample=sample,
+                             fireworks_model=fid, tokenizer=tok,
                              detail=f"starting; cost from tokens x ${train}/Mtok (Fireworks prices {PRICES_AS_OF})")
         cmd, env = runner()
         self.store.spawn(WORKER, job["job_id"], python=cmd, env=env)

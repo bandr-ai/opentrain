@@ -68,7 +68,7 @@ def only_methods(backend: str, spec: TrainSpec, methods: tuple[str, ...] = ("sft
     """Refuse a training method this backend does not run, naming the ones that do."""
     if spec.method not in methods:
         raise ValueError(f"trainer {backend} runs {', '.join(methods)}, not {spec.method}; "
-                         "rejection, opd and rl run on trainer modal or runpod")
+                         "all four (sft, rejection, opd, rl) run on trainer modal or runpod")
 
 
 def spec_to_dict(spec: TrainSpec) -> dict[str, Any]:
