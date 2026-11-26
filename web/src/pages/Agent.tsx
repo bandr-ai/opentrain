@@ -125,7 +125,9 @@ export function AgentPanel({ convo = true }: { convo?: boolean }) {
   const state = (sid && busy[sid]) || (session as any)?.status || "idle";
   const isBusy = !!sid && state !== "idle";
   const jobById = useMemo(() => Object.fromEntries(jobs.map((j) => [j.id, j])), [jobs]);
-  const shownJobs = new Set<string>();
+  // jobs a tool call in the conversation already shows inline; the rest get a card at the end
+  const shownJobs = new Set<string>(messages.flatMap((m) => m.parts.map((p) => p.tool?.metadata?.job_id)
+    .filter((j): j is string => typeof j === "string" && !!jobById[j])));
   const sessionJobs = jobs.filter((j) => j.session_id === sid && j.state === "running");
 
   const onSend = async (text: string) => {
@@ -174,7 +176,7 @@ export function AgentPanel({ convo = true }: { convo?: boolean }) {
       }}>
         <div className="agent-convo">
           {!sid && <AgentHello />}
-          {messages.map((m) => <MessageView key={m.id} m={m} jobById={jobById} shownJobs={shownJobs} />)}
+          {messages.map((m) => <MessageView key={m.id} m={m} jobById={jobById} />)}
           {sessionJobs.filter((j) => !shownJobs.has(j.id)).map((j) => <JobCard key={j.id} job={j} />)}
           {isBusy && state !== "waiting" && !messages.some((m) => m.role === "assistant" && !m.finish && m.parts.length) && (
             <div className="row faint small"><span className="dot busy" /> thinking…</div>
@@ -269,7 +271,7 @@ const NEEDS: Record<string, string> = {
 
 // ------------------------------------------------------------------ messages
 
-function MessageView({ m, jobById, shownJobs }: { m: Message; jobById: Record<string, Job>; shownJobs: Set<string> }) {
+function MessageView({ m, jobById }: { m: Message; jobById: Record<string, Job> }) {
   const text = (ps: Part[]) => ps.filter((p) => p.type === "text").map((p) => p.text || "").join("\n");
   if (m.role === "user") return <div className="msg-user">{text(m.parts)}</div>;
   if (m.role === "synthetic") {
@@ -288,7 +290,6 @@ function MessageView({ m, jobById, shownJobs }: { m: Message; jobById: Record<st
           if (p.tool.name === "propose") return <ProposalLine key={p.id} tool={p.tool} />;
           const jid = p.tool.metadata?.job_id;
           const job = jid ? jobById[jid] : undefined;
-          if (job) shownJobs.add(job.id);
           return (
             <div key={p.id} style={{ display: "grid", gap: 6 }}>
               <ToolView tool={p.tool} />

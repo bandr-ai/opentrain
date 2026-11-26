@@ -107,6 +107,8 @@ def cmd_run(a: argparse.Namespace) -> int:
                           + (f"  {tool.get('error')}" if tool["state"] == "error" else ""), file=sys.stderr)
                 elif t == "permission.created" and d.get("status") == "pending":
                     _answer_permission(c, sid, d, interactive)
+                elif t == "question.created" and d.get("status") == "pending" and not a.json:
+                    _answer_question(c, sid, d, interactive)
                 elif t == "proposal.created" and not a.json:
                     _show_proposal(c, sid, d, interactive)
                 elif t == "proposal.updated" and not a.json and d.get("status") in ("approved", "skipped", "changed"):
@@ -193,6 +195,32 @@ def _show_job(j: dict[str, Any], shown: dict[str, str]) -> None:
         tail = j.get("error") or j.get("detail") or ""
         print(f"\n  ▸ {title} {state}" + (f" · ${cost:.2f}" if isinstance(cost, (int, float)) else "")
               + (f" · {tail}" if tail else ""), file=sys.stderr)
+
+
+def _answer_question(c, sid: str, q: dict[str, Any], interactive: bool) -> None:
+    """The agent's question with numbered options; on a terminal, answer by number or in words."""
+    answers: list[list[str]] = []
+    for item in q.get("questions") or []:
+        print(f"\n? {item.get('question')}", file=sys.stderr)
+        opts = item.get("options") or []
+        for i, o in enumerate(opts, 1):
+            print(f"  {i}. {o}", file=sys.stderr)
+        if not interactive:
+            continue
+        try:
+            with open("/dev/tty") as tty:
+                sys.stderr.write("  answer (number or words): ")
+                sys.stderr.flush()
+                ans = tty.readline().strip()
+        except OSError:
+            return
+        pick = [opts[int(x) - 1] for x in ans.replace(",", " ").split() if x.isdigit() and 0 < int(x) <= len(opts)]
+        answers.append(pick or [ans or (opts[0] if opts else "")])
+    if interactive and answers:
+        try:
+            c.post(f"/api/session/{sid}/question/{q['id']}/reply", {"answers": answers})
+        except Exception as exc:  # noqa: BLE001 - answered elsewhere (the web app) meanwhile
+            print(f"  ({exc})", file=sys.stderr)
 
 
 def _show_proposal(c, sid: str, p: dict[str, Any], interactive: bool) -> None:
