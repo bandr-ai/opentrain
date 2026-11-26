@@ -3,19 +3,32 @@
 A recipe is the settings for one training run, picked from what OpenTrain already knows about the
 dataset (`src/opentrain/recipes.py`):
 
-| Task kind | Recognised by | LoRA rank | Learning rate | Notes |
+| Task kind | Recognised by | LoRA rank | Learning rate | Plan |
 | --- | --- | --- | --- | --- |
-| label | exact / contains grader, a small set of short answers | 16 | 2e-4 | classification, routing, yes/no |
-| extract | json / number / regex grader, or long exact answers | 32 | 2e-4 | structured output |
-| answer | judge or command grader | 32 | 1e-4 | free-form; distil from the best baseline first |
+| label | exact / contains grader, a small set of short answers | 16 | 2e-4 | sft, rejection |
+| extract | json / number / regex grader, or long exact answers | 32 | 2e-4 | sft, rejection |
+| reason | number / regex grader on long worked answers (GSM8K-like) | 32 | 2e-4 | sft, opd, rl, rejection |
+| answer | judge or command grader | 32 | 1e-4 | opd then sft when a teacher exists, else sft (distil from the best baseline first) |
 
-Epochs fall with the data: 4 under 100 rows, 3 under 500, 2 under 5,000, then 1. Models over 10B
-halve the learning rate. Before training, rows without an answer are labelled by a strong teacher
-(distillation). If a run does not beat the baseline: more and more varied rows first, then a larger
-base model, then one learning-rate sweep (half and double), one change per run.
+The plan lists the methods worth trying, in order. `rl` and `rejection` appear only when the grader
+runs inside the training loop (exact, contains, regex, json, number, or a `python` reward); `opd`
+only when a bigger model of the same family is known as a teacher (Qwen3.5 small → 9B, Qwen3 small →
+8B, Qwen3-8B → 14B, Qwen2.5 small → 7B, Llama 3.2 → 3.1-8B, Gemma 3 270m/1b → 4b).
 
-These are common LoRA starting points, not tuned optima. Every run is judged on its dataset's
-sealed held-out rows, so a recipe that does not fit a task shows up as a score, not a surprise.
+| Method | Settings |
+| --- | --- |
+| sft | the kind's rank and learning rate; epochs fall with the data: 4 under 100 rows, 3 under 500, 2 under 5,000, then 1 |
+| rejection | 2 rounds, 8 samples per prompt, keep up to 2 distinct passing answers, half the SFT learning rate, batch 16 |
+| opd | per-token reverse KL to the teacher on the student's own samples; lr 1e-4, 16 prompts × 2 samples per step |
+| rl | GRPO with a group-mean baseline (no std), token-mean loss, one on-policy step per batch; lr 4e-5, 16 prompts × 8 samples, steps = rows / 4 (20 to 100) |
+
+Models over 10B halve the learning rate. Before training, rows without an answer are labelled by a
+strong teacher (distillation). If a run does not beat the baseline: the next method in the plan,
+then more and more varied rows, then a larger base model, then one learning-rate sweep (half and
+double), one change per run. `dataset_recipe` also prices the run on your trainer.
+
+These are common starting points, not tuned optima. Every run is judged on its dataset's sealed
+held-out rows, so a recipe that does not fit a task shows up as a score, not a surprise.
 
 ## Measured
 

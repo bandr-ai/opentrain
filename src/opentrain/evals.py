@@ -50,8 +50,11 @@ def run(state: Path, directory: Path, dataset: str, target: str, *, split: str =
     if ids:
         want = set(ids)
         rows = [r for r in rows if r["id"] in want]
-    if limit:
-        rows = rows[: int(limit)]
+    if limit and split == "train" and not ids and int(limit) < len(rows):
+        step = len(rows) / int(limit)  # a look at training rows: spread across the set, not its head
+        rows = [rows[int(i * step)] for i in range(int(limit))]
+    elif limit:
+        rows = rows[: int(limit)]  # held-out: the same first rows for every model, so they compare
     if not rows:
         raise DatasetError(f"{dataset} has no {split} rows to evaluate")
     spec = meta.get("grader") or {"type": "judge"}
@@ -136,10 +139,13 @@ def list_evals(state: Path, dataset: str | None = None, target: str | None = Non
 
 
 def latest(state: Path, dataset: str, target: str) -> dict[str, Any] | None:
-    for e in list_evals(state, dataset, target):
-        if e["split"] == "heldout":
-            return get(state, e["id"])
-    return None
+    """The held-out eval that speaks for ``target``: the newest of those covering the most rows, so a
+    quick eval on a few rows never replaces a full one at the gate."""
+    held = [e for e in list_evals(state, dataset, target) if e["split"] == "heldout"]
+    if not held:
+        return None
+    most = max(e["summary"]["rows"] for e in held)
+    return get(state, next(e["id"] for e in held if e["summary"]["rows"] == most))
 
 
 def contamination(state: Path, dataset: str, training_file: Path) -> list[dict[str, Any]]:

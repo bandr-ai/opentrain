@@ -31,8 +31,12 @@ def min_heldout() -> int:
     return int(os.environ.get("OPENTRAIN_MIN_HELDOUT", "5"))
 
 
+_WORD = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]|[^\W\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]+")
+
+
 def _words(text: str) -> list[str]:
-    return re.findall(r"[A-Za-z0-9_]+", text.lower())
+    """Words in any script; Chinese and Japanese characters count one each (no spaces to split on)."""
+    return _WORD.findall(text.lower())
 
 
 def ngrams(text: str, n: int = N) -> set[tuple[str, ...]]:

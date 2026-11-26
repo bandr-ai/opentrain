@@ -20,5 +20,5 @@ on new sessions.
 
 ## Before promising a speedup
 
-`opentrain bench time` shows the model's share of working time. If tools take half the time, even
+`sessions_scan` (CLI: `opentrain debug bench`) shows the model's share of working time. If tools take half the time, even
 an instant model gives at most 2x end to end. Say so rather than promise 5x.

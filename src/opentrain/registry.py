@@ -11,6 +11,8 @@ Only the gate calls ``promote``. ``revert`` is the one-command rollback.
 from __future__ import annotations
 
 import json
+import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,7 +54,7 @@ class Registry:
         return json.loads(self.path.read_text())
 
     def _save(self, data: dict[str, Any]) -> None:
-        tmp = self.path.with_suffix(".tmp")
+        tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps(data, indent=2))
         tmp.replace(self.path)
 

@@ -155,10 +155,8 @@ def _api(method: str, path: str, body: dict | None = None, *, timeout: float = 6
 def serving_key() -> str:
     from ..core import credentials
 
-    key = os.environ.get(SERVE_KEY_ENV) or (credentials.get(SERVE_KEY_ID) or {}).get("key")
-    if not key:
-        key = "ot-" + secrets.token_urlsafe(24)
-        credentials.set_key(SERVE_KEY_ID, key)
+    key = os.environ.get(SERVE_KEY_ENV) or credentials.get_or_create(SERVE_KEY_ID,
+                                                                     lambda: "ot-" + secrets.token_urlsafe(24))
     os.environ[SERVE_KEY_ENV] = key
     return key
 

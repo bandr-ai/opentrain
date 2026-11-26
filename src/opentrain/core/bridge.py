@@ -25,19 +25,30 @@ PROTOCOL = "2025-06-18"
 
 
 INSTRUCTIONS = """OpenTrain post-trains models: it measures models on a dataset's sealed held-out rows,
-trains a small open model when that is worth it, and ships it only if it beats the baseline.
+trains a small open model when that is worth it, and ships a version only if it beats the baseline.
+Do only what the user's request needs: an eval question ends at the eval.
 
-Two ways in, each a skill to load with the skill tool and follow: the user brings data (data/tasks,
-and data/triage for traces), or names a model and a use case without data (data/find:
-dataset_search and dataset_peek over Hugging Face and Kaggle). Before RL, train/env.
+What the tools are for:
+- data: datasets, dataset_show; dataset_search / dataset_peek (Hugging Face, Kaggle);
+  dataset_import (a file, hf= or kaggle=; templates reshape columns; heldout=1 for an eval-only
+  benchmark); dataset_add (rows you write); dataset_label (distil answers from a teacher).
+- grading: dataset_edit grader= (exact, contains, regex, json, number, judge, command, or python:
+  the user's reward(prompt, answer, reference), which also drives RL); dataset_grade checks it on
+  answers you write.
+- measuring: dataset_eval (held-out: the score that counts; split=train: a quick look you may read,
+  with evals eval_id= for the answers); model_try for one prompt. modal/<hf id> and runpod/<hf id>
+  run open models on the user's own GPU account.
+- training: trainer_set (where and what), dataset_recipe (task kind, a plan of methods sft / opd /
+  rl / rejection, settings, and the price), dataset_train, then dataset_eval the new version and
+  dataset_promote (the gate decides).
+- skills (the skill tool) are playbooks to adapt: data/find (a use case, no data), data/tasks
+  (the user's own data or documents), data/triage (is this data good enough), train/env (a reward
+  for RL).
 
-Typical path: datasets / dataset_import (a file, hf= or kaggle=) -> dataset_edit (grader; the import
-suggests one) -> dataset_eval a strong model and a small one (modal/<hf id> runs open models on the
-user's Modal account) -> trainer_set (where and what to train) -> dataset_recipe (settings, the plan
-of methods sft / rejection / opd / rl, and the cost) -> dataset_label (distil missing answers) ->
-dataset_train -> dataset_eval the new version -> dataset_promote. Jobs run on the OpenTrain server and return at once: wait for one with job_wait
-(it blocks until the job ends), or look with jobs / job_status. The user watches the same project in the OpenTrain web app (opentrain web).
-Ask the user before any call that spends money, uploads data, trains or changes what is live.
+Jobs run on the OpenTrain server and return at once; job_wait waits up to its timeout (call it
+again if the job is still running), jobs / job_status / job_logs look. The user watches the same
+project in the web app (opentrain web). Ask the user before any call that spends money, uploads
+their data, trains or changes what is live; say the price (dataset_recipe gives it for training).
 The server enforces the budget and never lets anyone read held-out rows."""
 
 

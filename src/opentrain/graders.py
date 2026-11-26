@@ -4,7 +4,9 @@ A dataset names its grader in ``meta.json``::
 
     {"type": "exact"}                          same text as the reference (case and spacing ignored)
     {"type": "contains"}                       the reference appears in the answer
-    {"type": "regex", "pattern": "..."}        the answer matches the pattern (or the reference, if none)
+    {"type": "regex", "pattern": "..."}        the answer matches the pattern (or the reference, if none);
+                                               with a capture group, what it captures must equal the
+                                               reference (or what the pattern captures in it)
     {"type": "json"}                           the answer parses as JSON equal to the reference's JSON
     {"type": "number", "tolerance": 0.01}      the last number in the answer equals the reference's
     {"type": "judge", "rubric": "...",         a model grades against the rubric and the reference,
@@ -122,8 +124,18 @@ def grade(spec: dict[str, Any], prompt: str, answer: str, reference: str | None,
         s = float(_norm(reference or "") in _norm(answer))
         return Grade(s, s >= thr, "" if s else "reference not found in the answer")
     if kind == "regex":
+        flags = re.S | (re.I if spec.get("ignore_case", True) else 0)
         pat = spec.get("pattern") or re.escape((reference or "").strip())
-        s = float(re.search(pat, answer or "", re.S | (re.I if spec.get("ignore_case", True) else 0)) is not None)
+        m = re.search(pat, answer or "", flags)
+        if m and m.groups() and reference is not None:
+            # a capture group extracts the answer (a letter, a number): it must equal the reference's
+            got = _norm(next((g for g in m.groups() if g is not None), ""))
+            rm = re.search(pat, reference, flags)
+            want = _norm(next((g for g in rm.groups() if g is not None), "")) if rm and rm.groups() else \
+                _norm(reference)
+            s = float(got == want)
+            return Grade(s, s >= thr, "" if s else f"extracted {got!r}, expected {want!r}")
+        s = float(m is not None)
         return Grade(s, s >= thr, "" if s else "no match")
     if kind == "json":
         try:
@@ -258,6 +270,8 @@ def describe(spec: dict[str, Any]) -> str:
     if k == "python":
         return f"reward function in {spec.get('path') or 'the job'}"
     if k == "regex" and spec.get("pattern"):
+        if re.compile(spec["pattern"]).groups:
+            return f"extracts /{spec['pattern']}/ and compares it with the reference"
         return f"matches /{spec['pattern']}/"
     return {"exact": "exact match", "contains": "contains the reference", "regex": "matches the reference",
             "json": "same JSON as the reference", "number": "same number as the reference"}.get(k, str(k))

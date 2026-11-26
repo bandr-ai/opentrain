@@ -198,7 +198,7 @@ def use_version(state: Path, version: str | None, why: str = "manual") -> None:
         Registry(Path(state)).get(version)
     p = _live_path(state)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps({"version": version, "at": _now(), "why": why}))
     tmp.replace(p)
 

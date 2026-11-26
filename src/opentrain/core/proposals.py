@@ -14,6 +14,7 @@ The ``propose`` tool blocks on the answer like ``question`` does; clients answer
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import time
 from typing import Any
 
@@ -48,6 +49,9 @@ class Proposals:
             "status": "pending", "time": {"created": time.time()}})
         fut = asyncio.get_running_loop().create_future()
         self.waiting[p["id"]] = fut
+        auto = self._unattended(ctx.session_id, needs)
+        if auto is not None:  # nobody is there to click: decide now instead of waiting forever
+            self._settle(p["id"], *auto)
         self.store.publish("session.status", {"session_id": ctx.session_id, "status": "waiting",
                                               "proposal_id": p["id"]}, durable=False)
         try:
@@ -62,6 +66,17 @@ class Proposals:
             self.grants[ctx.session_id] = {"proposal_id": p["id"], "needs": needs, "cap_usd": p["cost_usd"],
                                            "spent_usd": 0.0, "until": time.time() + GRANT_SECONDS}
         return reply, message
+
+    def _unattended(self, sid: str, needs: list[str]) -> tuple[str, str, str] | None:
+        """``opentrain run --yes`` (auto_approve) approves; an unattended run without it skips."""
+        meta = (self.project.session(sid) or {}).get("metadata") or {}
+        if not meta.get("unattended"):
+            return None
+        auto = meta.get("auto_approve") or []
+        if all(any(fnmatch.fnmatchcase(n, a) for a in auto) for n in needs) and auto:
+            return "approved", "approved automatically (opentrain run --yes)", "approve"
+        return ("skipped", "unattended run: nobody can approve this step. Stop here and say what you would do "
+                "next; the user can rerun with --yes or continue in the app.", "skip")
 
     def reply(self, pid: str, reply: str, message: str | None = None) -> dict[str, Any]:
         if reply not in REPLIES:
@@ -123,5 +138,7 @@ async def propose_tool(ctx: ToolContext, title: str, why: str = "", cost_usd: fl
     if reply == "change":
         return (f"The user wants this step changed: {message}\nAdjust the plan and propose again (or just do it if "
                 "the change makes it free and harmless).")
+    if message:  # skipped for a reason (an unattended run)
+        raise ToolError(f"not approved: {message}")
     raise ToolError("the user skipped this step. Do not do it. Say in one line what you will do instead, or ask "
                     "what they want.")

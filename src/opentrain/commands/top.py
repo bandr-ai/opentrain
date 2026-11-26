@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,8 @@ def cmd_run(a: argparse.Namespace) -> int:
     from ..core.store import merge
 
     parts: dict[str, dict[str, Any]] = {}
+    shown_jobs: dict[str, str] = {}
+    follow: dict[str, Any] = {"idle_since": None}
 
     def listen() -> None:
         busy_seen = False
@@ -104,14 +107,29 @@ def cmd_run(a: argparse.Namespace) -> int:
                           + (f"  {tool.get('error')}" if tool["state"] == "error" else ""), file=sys.stderr)
                 elif t == "permission.created" and d.get("status") == "pending":
                     _answer_permission(c, sid, d, interactive)
+                elif t == "proposal.created" and not a.json:
+                    _show_proposal(c, sid, d, interactive)
+                elif t == "proposal.updated" and not a.json and d.get("status") in ("approved", "skipped", "changed"):
+                    print(f"  → {d['status']}" + (f": {d['message']}" if d.get("message") else ""), file=sys.stderr)
                 elif t == "message.updated" and d.get("error"):
                     errors.append(str(d["error"]))
+                elif t in ("job.created", "job.updated") and not a.json:
+                    _show_job(d, shown_jobs)
                 elif t == "session.status":
                     if d.get("status") == "busy":
                         busy_seen = True
+                        follow["idle_since"] = None
                     elif d.get("status") == "idle" and busy_seen:
-                        done.set()
-                        return
+                        if a.detach or not _active_jobs(c, sid):
+                            done.set()
+                            return
+                        # the agent started work that outlives its turn: the server wakes it when the
+                        # work ends, so keep following until nothing of this session is running
+                        busy_seen = False
+                        follow["idle_since"] = time.time()
+                        if not a.json:
+                            print("\n  … waiting for the job; the agent continues when it ends (ctrl+c to leave it "
+                                  "running)", file=sys.stderr)
         except Exception as exc:  # the stream dropped: fall back to waiting
             errors.append(f"event stream: {exc}")
             connected.set()
@@ -126,6 +144,11 @@ def cmd_run(a: argparse.Namespace) -> int:
         else:
             c.post(f"/api/session/{sid}/prompt", {"text": text})
         while not done.wait(1.0):
+            since, now = follow["idle_since"], time.time()
+            if since and now - since > 30 and now - follow.get("checked", 0) > 15:
+                follow["checked"] = now
+                if not _active_jobs(c, sid) and c.get(f"/api/session/{sid}").get("status") == "idle":
+                    break  # the jobs ended and nothing woke the agent
             if not th.is_alive():
                 c.post(f"/api/session/{sid}/wait", {"timeout": 24 * 3600})
                 break
@@ -143,6 +166,61 @@ def cmd_run(a: argparse.Namespace) -> int:
         s = c.get(f"/api/session/{sid}")
         print(f"\n[{sid} · {s.get('agent')} · ${s.get('cost') or 0:.4f}]", file=sys.stderr)
     return 1 if (last and last.get("error") and last.get("finish") != "interrupted") else 0
+
+
+def _active_jobs(c, sid: str) -> list[dict[str, Any]]:
+    try:
+        return c.get("/api/job", session=sid, active="1")
+    except Exception:  # noqa: BLE001 - an unreachable server ends the follow, not the run
+        return []
+
+
+def _show_job(j: dict[str, Any], shown: dict[str, str]) -> None:
+    """One line per job state change: started, then how it ended."""
+    if not j.get("id") or not j.get("state"):
+        return
+    state = j["state"]
+    if shown.get(j["id"]) == state:
+        return
+    shown[j["id"]] = state
+    if j.get("title"):
+        shown[j["id"] + ":title"] = j["title"]
+    title = shown.get(j["id"] + ":title") or j.get("kind") or "job"
+    if state == "running":
+        print(f"\n  ▸ {title} started", file=sys.stderr)
+    else:
+        cost = j.get("cost_usd")
+        tail = j.get("error") or j.get("detail") or ""
+        print(f"\n  ▸ {title} {state}" + (f" · ${cost:.2f}" if isinstance(cost, (int, float)) else "")
+              + (f" · {tail}" if tail else ""), file=sys.stderr)
+
+
+def _show_proposal(c, sid: str, p: dict[str, Any], interactive: bool) -> None:
+    """A proposed step, as a card; on a terminal, approve, skip or change it right here."""
+    cost = f"~${p['cost_usd']:.2f}" if p.get("cost_usd") else "free"
+    mins = f" · {p['minutes']:g} min" if isinstance(p.get("minutes"), (int, float)) else ""
+    needs = f" · needs {', '.join(p['needs'])}" if p.get("needs") else ""
+    print(f"\n┌ next step: {p.get('title')}\n│ {cost}{mins}{needs}" + (f"\n│ {p['why']}" if p.get("why") else ""),
+          file=sys.stderr)
+    if p.get("status") != "pending" or not interactive:
+        return
+    try:
+        with open("/dev/tty") as tty:
+            sys.stderr.write("└ [a]pprove / [s]kip / or type a change: ")
+            sys.stderr.flush()
+            ans = tty.readline().strip()
+    except OSError:
+        return
+    if ans.lower() in ("a", "approve", "y", "yes", ""):
+        body: dict[str, Any] = {"reply": "approve"}
+    elif ans.lower() in ("s", "skip", "n", "no"):
+        body = {"reply": "skip"}
+    else:
+        body = {"reply": "change", "message": ans}
+    try:
+        c.post(f"/api/session/{sid}/proposal/{p['id']}/reply", body)
+    except Exception as exc:  # noqa: BLE001 - settled elsewhere (the web app) meanwhile
+        print(f"  ({exc})", file=sys.stderr)
 
 
 def _answer_permission(c, sid: str, req: dict[str, Any], interactive: bool) -> None:
@@ -294,6 +372,8 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--session", help="continue this session")
     r.add_argument("--yes", action="store_true", help="approve every ask (spend, upload, run) without prompting")
     r.add_argument("--json", action="store_true", help="print events as JSON lines")
+    r.add_argument("--detach", action="store_true",
+                   help="return when the agent's turn ends, even if a job it started is still running")
     server_opts(r)
     r.set_defaults(fn=cmd_run)
 

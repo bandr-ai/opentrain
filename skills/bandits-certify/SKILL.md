@@ -10,8 +10,8 @@ wrong. Certify it against answers whose outcome you know in advance.
 
 ## When to use
 
-- Every task, before it enters the store (`opentrain mine` does this for you).
-- Before every evaluation: `opentrain lint` re-runs the controls on every stored task, because
+- Every task, before it enters the store (`tasks_mine` does this for you).
+- Before every evaluation: `tasks_lint` re-runs the controls on every stored task, because
   environments drift (a dependency upgrade, a deleted clone, a new interpreter).
 - After any change to a task folder by hand.
 
@@ -39,7 +39,7 @@ environment reason, the controls' detail starts with `environment:`.
 
 ## Steps
 
-1. `opentrain lint` (all stored tasks) or let `opentrain mine` certify new ones.
+1. `tasks_lint` (all stored tasks) or let `tasks_mine` certify new ones.
 2. Read every broken row. For `environment`, fix the machine and lint again. For a verifier that
    now passes the noop or fails the reference, drop or rebuild the task; never edit the tests to
    make the controls pass.
@@ -48,7 +48,7 @@ environment reason, the controls' detail starts with `environment:`.
 
 ## Measure of success
 
-`opentrain lint` exits 0: every stored verifier holds, on this machine, today.
+`tasks_lint` reports nothing broken: every stored verifier holds, on this machine, today.
 
 ## Failure modes
 

@@ -162,3 +162,23 @@ def test_engine_tokens_count_against_the_budget(live):
     msgs = c.get(f"/api/session/{s['id']}/message")
     assert "budget is used up" in (msgs[-1].get("error") or "")
     assert c.get(f"/api/session/{s['id']}")["cost"] == pytest.approx(1.2)
+
+
+def test_unattended_proposals_never_wait(live):
+    """`opentrain run --yes` approves proposed steps; an unattended run without it skips them, with a reason."""
+    c, s = _start(live, "p6", [[{"tool": "propose", "input": {"title": "Import x", "needs": ["download"]}}], ["done"]],
+                  metadata={"unattended": True, "auto_approve": ["*"]})
+    t = _tools(c, s["id"])[0]
+    assert t["state"] == "completed" and "Approved" in t["output"]
+    c, s = _start(live, "p7", [[{"tool": "propose", "input": {"title": "Train", "needs": ["job.start"]}}], ["done"]],
+                  metadata={"unattended": True})
+    t = _tools(c, s["id"])[0]
+    assert t["state"] == "error" and "nobody can approve" in t["error"]
+    assert c.get("/api/proposal") == []
+
+
+def test_unattended_questions_never_wait(live):
+    c, s = _start(live, "p8", [[{"tool": "question", "input": {"questions": [
+        {"question": "Which?", "options": ["a", "b"]}]}}], ["done"]], metadata={"unattended": True})
+    t = _tools(c, s["id"])[0]
+    assert t["state"] == "error" and "nobody can answer" in t["error"]

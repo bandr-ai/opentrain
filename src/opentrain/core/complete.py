@@ -123,7 +123,7 @@ def _hosted(host: str, base: str, messages, max_tokens, timeout, t0) -> Completi
     return _openai(ep, f"{host}/{base}", messages, max_tokens, timeout, t0, host=(host, base))
 
 
-THINK = re.compile(r"^\s*<think>.*?</think>\s*", re.S)
+THINK = re.compile(r"^\s*(?:<think>)?.*?</think>\s*", re.S)  # the opening tag may be in the prompt (Qwen3.5)
 
 
 def _openai(ep, label: str, messages, max_tokens, timeout, t0, host: tuple[str, str] | None = None) -> Completion:

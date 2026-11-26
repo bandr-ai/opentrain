@@ -56,3 +56,24 @@ def test_help_and_debug(live):
     assert "run" in r.stdout and "debug" in r.stdout
     r = subprocess.run([sys.executable, "-m", "opentrain", "debug", "--help"], capture_output=True, text=True)
     assert "bench" in r.stdout and "mine" in r.stdout
+
+
+def test_run_follows_a_job_to_the_end(live):
+    """The agent starts an eval and ends its turn; `run` waits for the job and the turn it wakes."""
+    c = live.client(live.proj)
+    content = "".join(json.dumps({"question": f"q{i}", "answer": "done"}) + "\n" for i in range(30))
+    c.post("/api/dataset/fj/upload", {"filename": "fj.jsonl", "content": content})
+    c.patch("/api/dataset/fj", {"grader": {"type": "exact"}})
+    ScriptedProvider.register("fj-model", [])
+    ScriptedProvider.register("cli5", [
+        [{"tool": "dataset_eval", "input": {"name": "fj", "model": "scripted/fj-model"}}],
+        ["Started the eval; waiting for it."],
+        ["The eval finished: all rows passed."]])
+    r = _run(live, "run", "--yes", "--model", "scripted/cli5", "evaluate fj")
+    assert r.returncode == 0, r.stderr
+    assert "eval scripted/fj-model on fj succeeded" in r.stderr, r.stderr
+    assert "The eval finished" in r.stdout, r.stdout
+    ScriptedProvider.register("cli6", [[{"tool": "dataset_eval", "input": {"name": "fj", "model": "scripted/fj-model"}}],
+                                       ["started"]])
+    r = _run(live, "run", "--yes", "--detach", "--model", "scripted/cli6", "x")
+    assert r.returncode == 0 and "waiting for the job" not in r.stderr

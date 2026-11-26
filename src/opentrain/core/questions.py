@@ -27,6 +27,10 @@ class Questions:
         for q in questions:
             if not q.get("question") or not isinstance(q.get("options"), list) or not q["options"]:
                 raise ToolError("each question needs text and at least one option")
+        meta = (self.project.session(ctx.session_id) or {}).get("metadata") or {}
+        if meta.get("unattended"):  # nobody can answer: say so at once instead of waiting forever
+            raise ToolError("unattended run: nobody can answer questions. If one option is clearly safe and "
+                            "cheap, take it and say which and why; otherwise stop and say what you need.")
         q = self.project.store.create("question", {
             "session_id": ctx.session_id, "message_id": ctx.message_id, "call_id": ctx.call_id,
             "questions": questions, "status": "pending", "time": {"created": time.time()}})

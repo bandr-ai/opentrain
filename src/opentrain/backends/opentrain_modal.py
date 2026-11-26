@@ -58,7 +58,9 @@ if MODE == "train":
     app = modal.App("opentrain-train")
     train_image = (
         modal.Image.debian_slim(python_version="3.12")
-        .uv_pip_install("torch", "transformers==5.8.1", "peft", "trl", "datasets", "accelerate")
+        # torchvision and pillow: vision-language bases (Qwen3.5, Gemma 3) load an image processor
+        .uv_pip_install("torch", "torchvision", "pillow", "transformers==5.8.1", "peft", "trl", "datasets",
+                        "accelerate")
         .env({"HF_XET_HIGH_PERFORMANCE": "1"})
     )
 

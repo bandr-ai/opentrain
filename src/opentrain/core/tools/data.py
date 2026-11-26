@@ -92,15 +92,20 @@ def dataset_show(ctx: ToolContext, name: str, offset: int = 0, limit: int = 10) 
 
 
 async def dataset_import(ctx: ToolContext, name: str, path: str | None = None, hf: str | None = None,
-                         split: str | None = None, config: str | None = None, limit: int = 2000,
+                         split: str | None = None, config: str | None = None, limit: int | None = None,
                          input_key: str | None = None, output_key: str | None = None, description: str | None = None,
-                         system: str | None = None, kaggle: str | None = None, file: str | None = None) -> Any:
-    from ...datasets import read_file, read_hf, read_kaggle
+                         system: str | None = None, kaggle: str | None = None, file: str | None = None,
+                         input_template: str | None = None, output_template: str | None = None,
+                         heldout: float | None = None) -> Any:
+    from ...datasets import DatasetError, apply_template, read_file, read_hf, read_kaggle
 
     if sum(map(bool, (path, hf, kaggle))) != 1:
         raise ToolError("give exactly one of path (a JSONL/JSON/CSV file), hf (a Hugging Face dataset id) or kaggle "
                         "(a Kaggle dataset id, owner/name)")
     tf = _tf(ctx)
+    remote_limit = max(1, min(int(limit or 2000), 50_000))
+    if heldout is not None and not 0 <= float(heldout) <= 1:
+        raise ToolError("heldout is a fraction from 0 to 1 (1: every row is for evaluation only)")
     if path:
         p = Path(path).expanduser()
         p = p if p.is_absolute() else ctx.project.directory / p
@@ -111,19 +116,29 @@ async def dataset_import(ctx: ToolContext, name: str, path: str | None = None, h
         source = {"file": str(p)}
     elif kaggle:
         await ctx.ask("download", [f"kaggle.com/datasets/{kaggle}"], metadata={"dataset": kaggle})
-        raws, source = await asyncio.to_thread(_err(read_kaggle), kaggle, file=file,
-                                               limit=max(1, min(int(limit), 50_000)))
+        raws, source = await asyncio.to_thread(_err(read_kaggle), kaggle, file=file, limit=remote_limit)
     else:
         await ctx.ask("download", [f"huggingface.co/datasets/{hf}"], metadata={"dataset": hf})
-        raws, source = await asyncio.to_thread(_err(read_hf), hf, split=split, config=config,
-                                               limit=max(1, min(int(limit), 50_000)))
+        raws, source = await asyncio.to_thread(_err(read_hf), hf, split=split, config=config, limit=remote_limit)
+    total = len(raws)
     if limit and len(raws) > int(limit):
         raws = raws[: int(limit)]
+    if input_template or output_template:
+        try:
+            raws = [apply_template(r, input_template, output_template) for r in raws]
+        except DatasetError as exc:
+            raise ToolError(str(exc)) from None
+        input_key = "prompt" if input_template else input_key
+        output_key = "completion" if output_template else output_key
     r = await asyncio.to_thread(_err(_ds(ctx).add), name, raws, description=description, source=source,
                                 input_key=input_key, output_key=output_key, system=system,
-                                heldout=tf.heldout_fraction)
+                                heldout=tf.heldout_fraction if heldout is None else float(heldout))
     sample_cols = sorted(raws[0].keys())[:20] if raws and isinstance(raws[0], dict) else []
     out = {**r, "columns_seen": sample_cols}
+    if (hf or kaggle) and total >= remote_limit:
+        out["note"] = f"took the first {remote_limit} rows of the source; pass limit to take more (up to 50,000)"
+    elif path and limit and total > int(limit):
+        out["note"] = f"took {limit} of the file's {total} rows"
     grader = _ds(ctx).meta(name).get("grader") or {}
     if grader.get("type", "judge") == "judge" and len(grader) <= 1:  # still the default judge
         hint = suggest_grader(_ds(ctx).rows(name))
@@ -140,6 +155,10 @@ def suggest_grader(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     from ...graders import _last_number
 
     refs = [x for x in (reference_of(r) for r in rows[:200]) if x]
+    if len(refs) >= 5 and all(re.fullmatch(r"\s*\(?[A-Ja-j][).:]?\s*", x) for x in refs):
+        return {"type": "regex", "pattern": r"^\W*([A-J])\b",
+                "why": "every reference is an option letter: the first letter of the answer must match it (ask "
+                       "for the letter only in the system prompt)"}
     if len(refs) >= 5 and sum(_last_number(x) is not None for x in refs) >= 0.95 * len(refs):
         tail = sum(bool(re.search(r"(####|\\boxed\{|answer is)\s*-?[\d$]", x, re.I)) for x in refs)
         if tail >= 0.8 * len(refs) or max(map(len, refs)) <= 20:
@@ -243,18 +262,21 @@ def _charge(ctx: ToolContext, usd: float, what: str) -> None:
 
 
 def dataset_eval(ctx: ToolContext, name: str, model: str, limit: int | None = None,
-                 split: str = "heldout") -> ToolResult:
+                 split: str = "heldout", ids: list[str] | None = None) -> ToolResult:
     from ...evals import run
 
     if split not in ("heldout", "train"):
         raise ToolError("split is heldout or train")
+    if ids and split != "train":
+        raise ToolError("ids pick training rows (split=train); held-out rows are not yours to pick")
     _err(_ds(ctx).meta)(name)
     check, _ = _budget_guard(ctx)
     state, directory, judge = ctx.project.state, ctx.project.directory, _engine_model(ctx)
 
     def work(job: JobContext) -> Any:
         job.progress(0.0, f"running {model} on {split} rows of {name}")
-        rec = run(state, directory, name, model, split=split, limit=limit, judge_model=judge, budget_check=check,
+        rec = run(state, directory, name, model, split=split, limit=limit, ids=ids, judge_model=judge,
+                  budget_check=check,
                   progress=lambda d, n: job.progress(d / n, f"{d}/{n} rows"),
                   cancelled=lambda: job.cancel_event.is_set())
         _charge(ctx, rec["summary"]["cost_usd"], f"eval {model} on {name}")
@@ -277,9 +299,38 @@ def evals_list(ctx: ToolContext, dataset: str | None = None, eval_id: str | None
     from ...evals import get, list_evals
 
     if eval_id:
+        from ...evals import answers
+
         rec = _err(get)(ctx.project.state, eval_id)
-        return {k: rec[k] for k in ("id", "dataset", "target", "split", "summary", "rows")}
+        out = {k: rec[k] for k in ("id", "dataset", "target", "split", "summary", "rows")}
+        if rec["split"] == "train":  # training rows are yours to read: show each answer next to its score
+            said = {a["id"]: a.get("answer") for a in answers(ctx.project.state, eval_id)}
+            out["rows"] = [{**r, "answer": (said.get(r["id"]) or "")[:1500]} for r in rec["rows"]]
+        return out
     return list_evals(ctx.project.state, dataset)[:30]
+
+
+def dataset_grade(ctx: ToolContext, name: str, answer: str, row_id: str | None = None, prompt: str | None = None,
+                  reference: str | None = None) -> Any:
+    """Grade an answer you give with the dataset's grader: check a grader or reward on controls (the
+    reference, an empty answer, a stuffed one) before anything spends money."""
+    from ...datasets import prompt_text, reference_of
+    from ...graders import GraderError, grade
+
+    ds = _ds(ctx)
+    spec = _err(ds.meta)(name).get("grader") or {"type": "judge"}
+    if row_id:
+        row = next((r for r in ds.rows(name) if r["id"] == row_id), None)
+        if row is None:
+            raise ToolError(f"no training row {row_id} in {name} (held-out rows cannot be graded here)")
+        prompt, reference = prompt_text(row), reference if reference is not None else reference_of(row)
+    try:
+        g = grade(spec, prompt or "", answer, reference, directory=ctx.project.directory,
+                  default_model=_engine_model(ctx))
+    except GraderError as exc:
+        raise ToolError(str(exc)) from None
+    _charge(ctx, g.cost, f"grade on {name}")
+    return {"score": g.score, "passed": g.passed, "reason": g.reason, "grader": spec.get("type")}
 
 
 def model_try(ctx: ToolContext, model: str, prompt: str, system: str | None = None) -> Any:
@@ -471,14 +522,21 @@ def tools() -> list[Tool]:
                                                        "CSV/JSON/JSONL)"},
              "split": {"type": "string"}, "config": {"type": "string"}, "limit": {"type": "integer"},
              "input_key": {"type": "string"}, "output_key": {"type": "string"},
+             "input_template": {"type": "string", "description": "build the prompt from columns, e.g. "
+                                "\"{question}\\n\\n{options_lettered}\" (a list/dict column as A. B. C. lines)"},
+             "output_template": {"type": "string", "description": "build the answer, e.g. \"{answer_idx}\" or "
+                                 "\"{cop_letter}\" (an index column as a letter)"},
+             "heldout": {"type": "number", "description": "share of new rows sealed for evaluation (default: the "
+                         "Trainfile's); 1 makes an eval-only dataset, e.g. a benchmark's test split"},
              "description": {"type": "string"}, "system": {"type": "string"}}, ["name"]),
-          dataset_import, permission=lambda a: [("read", a["path"])] if a.get("path") else []),
+          dataset_import, permission=lambda a: [("import", a["path"])] if a.get("path") else []),
         T("dataset_add", "Add rows you wrote or generated: objects with 'messages' (chat) or prompt and completion. "
           "Use this to build a dataset from the user's description, from documents, or from examples they paste.",
           S({"name": {"type": "string"}, "rows": {"type": "array", "items": obj},
              "description": {"type": "string"}, "system": {"type": "string"}}, ["name", "rows"]), dataset_add),
         T("dataset_edit", "Change a dataset: description, system prompt, grader ({type: exact|contains|regex|json|"
-          "number|judge|command, rubric, pattern, model, command, threshold}), remove rows by id, or set reference "
+          "number|judge|command|python, rubric, pattern, model, command, path, threshold}; python: a .py file "
+          "with reward(prompt, answer, reference) -> 0..1, which also runs inside RL), remove rows by id, or set reference "
           "answers ({row_id: answer}).",
           S({"name": {"type": "string"}, "description": {"type": "string"}, "system": {"type": "string"},
              "grader": obj, "remove_ids": {"type": "array", "items": {"type": "string"}},
@@ -492,13 +550,22 @@ def tools() -> list[Tool]:
           else [("spend", f"labelling {a['name']}")]),
         T("dataset_eval", "Job: run a model (provider/model, or a trained version like v3) on a dataset's held-out "
           "rows and grade every answer. Returns scores per row id, never held-out content. Use it for the "
-          "baseline before training and for every new version.",
+          "baseline before training and for every new version; compare models on full held-out evals (the gate "
+          "uses each model's eval covering the most rows). split=train is a quick look you may read: limit "
+          "samples across the set, ids picks rows (e.g. a batch you just added), and evals eval_id= shows "
+          "each answer.",
           S({"name": {"type": "string"}, "model": {"type": "string"}, "limit": {"type": "integer"},
-             "split": {"type": "string", "enum": ["heldout", "train"]}}, ["name", "model"]),
+             "split": {"type": "string", "enum": ["heldout", "train"]},
+             "ids": {"type": "array", "items": {"type": "string"}}}, ["name", "model"]),
           dataset_eval, permission=lambda a: [] if str(a.get("model") or "").startswith("claude-code/")
           else [("spend", f"eval {a['model']}")]),
-        T("evals", "Past evals (a dataset's, or one eval's per-row scores).",
+        T("evals", "Past evals (a dataset's, or one eval's per-row scores; on split=train also each answer).",
           S({"dataset": {"type": "string"}, "eval_id": {"type": "string"}}), evals_list),
+        T("dataset_grade", "Grade an answer you give with the dataset's grader, against a training row "
+          "(row_id) or a prompt and reference. Check a grader or a reward on controls before spending: the "
+          "reference should pass; an empty, off-task or stuffed answer should not.",
+          S({"name": {"type": "string"}, "answer": {"type": "string"}, "row_id": {"type": "string"},
+             "prompt": {"type": "string"}, "reference": {"type": "string"}}, ["name", "answer"]), dataset_grade),
         T("model_try", "Ask one model one prompt and see its answer (a version like v3, or provider/model).",
           S({"model": {"type": "string"}, "prompt": {"type": "string"}, "system": {"type": "string"}},
             ["model", "prompt"]), model_try),

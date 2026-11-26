@@ -1,53 +1,56 @@
 ---
 name: data/find
-description: The user names a model and a use case but has no data. Search Hugging Face and Kaggle in a loop, shortlist, peek, import a slice, triage it, and settle on the training and eval data.
+description: The user names a model and a use case but has no data. Search Hugging Face and Kaggle, shortlist, peek, import, triage, and settle on training and evaluation data.
 ---
 
 # data/find
 
-Start: "make Qwen3.5-4B better at X" with no data. The job is to find data that teaches X and data
-that measures X, honestly.
+Start: "make Qwen3.5-4B better at X" with no data. The job: data that teaches X and data that
+measures X, honestly.
 
 ## 1. Pin the use case
 
-One sentence each: what the model receives, what a good answer looks like, how you would check it
-(one right answer, a number, a label, JSON, or open text a judge grades). If you cannot write these,
-ask one `question` first. Set it with `goal_set`.
+What the model receives, what a good answer looks like, how you would check it (one right answer,
+a number, a label, JSON, or open text a judge grades). If you cannot say these, ask one `question`.
+Set the goal with `goal_set`.
 
-## 2. The search loop
+## 2. Search until you have real candidates
 
-Repeat at most 3 rounds:
+`dataset_search` with several phrasings: the task ("math word problems"), the domain ("grade school
+math"), known benchmark names ("gsm8k"), data-type words ("instruct", "sft", "reasoning traces",
+"mcq", "qa pairs"), other languages when the task is not English. Shortlist a few by:
 
-1. `dataset_search` with at least four phrasings: the task ("math word problems"), the domain
-   ("grade school math"), known benchmark names ("gsm8k"), and data-type words ("instruct",
-   "sft", "reasoning traces", "mcq", "qa pairs"). Both sources.
-2. **Shortlist up to 5** by: fit (same kind of input and output as the use case), license (flag
-   `nc` / non-commercial and "other" to the user), size (300+ rows usable, 2,000+ good), answers
-   present or checkable, popularity (downloads, likes, Kaggle usability), not gated.
-3. `dataset_peek` each Hugging Face candidate: which config and split, which columns are the prompt
-   and the answer, whether answers need converting (choice index to text, a final-answer line).
-4. If nothing fits, rephrase (narrower domain, the benchmark's name, another language) and loop.
+- **fit**: the same kind of input and output as the use case;
+- **license**: flag non-commercial (`nc`) and "other" to the user;
+- **size**: enough rows for the method (hundreds for SFT on a narrow task, more for broad ones;
+  RL needs a few hundred prompts);
+- **answers**: present, or checkable;
+- **health**: downloads, likes or Kaggle usability; not gated.
 
-## 3. Try the best one
+`dataset_peek` each Hugging Face candidate: which config and split, which columns hold the prompt
+and the answer, whether they need reshaping. Nothing fits: rephrase (narrower, the benchmark's name,
+another language) and search again; after a few rounds with nothing, say so and offer to build data
+with the user instead (`data/tasks`).
 
-1. Propose the import (`needs: download`), then `dataset_import` a slice (`limit` 300, the right
-   `config`, `split`, `input_key`, `output_key`, and a `system` prompt that asks for the answer
-   format the grader checks).
-2. Run data/triage with one or two batches. Set the grader (`dataset_edit`; the import suggests
-   one).
-3. Bad fit or poor quality: drop it (`dataset_edit` or a new name) and try the next candidate.
-   Columns that need reshaping (choices lists, nested fields): write a small converter script to
-   JSONL and `dataset_import path=`.
-4. Good: import more (a few thousand rows is plenty for SFT; RL needs a few hundred prompts).
-   Several sources can feed one dataset name: `dataset_import` with the same name extends it.
+## 3. Import and look
+
+Public datasets are free to import; say the license. `dataset_import` with the right `config`,
+`split`, columns and a `system` prompt that asks for the format the grader checks. Reshape with
+templates rather than scripts: `input_template="{question}\n\n{options_lettered}"`,
+`output_template="{answer_idx}"` (or `{cop_letter}` for an index column). Start with a slice
+(a few hundred rows) to look at, then take what you need with `limit`.
+
+Run data/triage on it and set the grader (`dataset_edit`; the import suggests one when it can).
+A poor fit: drop it and try the next candidate. Several sources can feed one dataset name.
 
 ## 4. Measure on something you did not train on
 
-A well-known benchmark is for measuring. If you train on one source, prefer a different, public
-benchmark of the same skill as a second dataset to evaluate on, and never import the benchmark's
-test split into training. Say which is which.
+Each dataset seals part of its rows for the gate. A separate public benchmark of the same skill is
+a stronger check: import it under its own name with `heldout=1` (every row sealed), never into the
+training dataset, and report its score next to the gate's. The gate itself decides on the training
+dataset's own held-out rows.
 
 ## 5. Report
 
 The data you chose and why (fit, size, license), what you dropped and why, the grader, and the next
-step: baselines (`dataset_eval` the base model and a frontier model), then `dataset_recipe`.
+step: baselines, then `dataset_recipe`.

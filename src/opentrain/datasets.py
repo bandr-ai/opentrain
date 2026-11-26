@@ -22,8 +22,10 @@ import csv
 import hashlib
 import io
 import json
+import os
 import random
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -58,6 +60,41 @@ def _text(v: Any) -> str:
     if isinstance(v, list) and all(isinstance(x, dict) and "text" in x for x in v):
         return "".join(str(x["text"]) for x in v)
     return json.dumps(v, ensure_ascii=False)
+
+
+class _Row(dict):
+    """A source row for templates, with ready-made fields for multiple choice: ``<list or dict>_lettered``
+    ("A. ...\nB. ...") and ``<small int>_letter`` (0 -> "A")."""
+
+    def __missing__(self, key: str) -> Any:
+        base, _, kind = key.rpartition("_")
+        v = dict.get(self, base)
+        if kind == "lettered" and isinstance(v, (list, dict)):
+            items = list(v.values()) if isinstance(v, dict) else v
+            keys = list(v.keys()) if isinstance(v, dict) and all(len(str(k)) == 1 for k in v) else \
+                [chr(65 + i) for i in range(len(items))]
+            return "\n".join(f"{k}. {_text(x)}" for k, x in zip(keys, items))
+        if kind == "letter" and isinstance(v, int) and 0 <= v < 26:
+            return chr(65 + v)
+        if kind == "letter" and isinstance(v, str) and v.isdigit() and int(v) < 26:
+            return chr(65 + int(v))
+        raise DatasetError(f"no column {key!r} for the template; have: {', '.join(sorted(self)[:15])}")
+
+
+def apply_template(raw: dict[str, Any], input_template: str | None, output_template: str | None) -> dict[str, Any]:
+    """Build the prompt and answer from a row's columns: ``"{question}\n\n{options_lettered}"``,
+    ``"{answer_idx}"``, ``"{cop_letter}"``, ``"{choices[0]}"``. Columns only, no attributes."""
+    out = dict(raw)
+    for key, tpl in (("prompt", input_template), ("completion", output_template)):
+        if not tpl:
+            continue
+        if "__" in tpl or re.search(r"\{[^}]*\.[A-Za-z_]", tpl):
+            raise DatasetError("templates may name columns and indexes ({col}, {col[0]}, {col[key]}), not attributes")
+        try:
+            out[key] = tpl.format_map(_Row(raw))
+        except (KeyError, IndexError, ValueError, TypeError) as exc:
+            raise DatasetError(f"template: {exc}") from None
+    return out
 
 
 def normalize(raw: dict[str, Any], *, input_key: str | None = None, output_key: str | None = None,
@@ -487,7 +524,7 @@ def _append(p: Path, rows: list[dict[str, Any]]) -> None:
 
 def _write(p: Path, rows: list[dict[str, Any]]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
     tmp.replace(p)
 

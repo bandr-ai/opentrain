@@ -312,10 +312,7 @@ def serving_key() -> str:
     """The key every OpenTrain endpoint on Modal requires; generated once, kept in the auth store."""
     from ..core import credentials
 
-    key = os.environ.get(KEY_ENV) or (credentials.get(KEY_ID) or {}).get("key")
-    if not key:
-        key = "ot-" + secrets.token_urlsafe(24)
-        credentials.set_key(KEY_ID, key)
+    key = os.environ.get(KEY_ENV) or credentials.get_or_create(KEY_ID, lambda: "ot-" + secrets.token_urlsafe(24))
     os.environ[KEY_ENV] = key
     return key
 

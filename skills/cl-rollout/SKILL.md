@@ -24,8 +24,8 @@ Verified passes per task. A task with none contributes nothing to training.
 
 ## Failure modes
 
-- Every attempt fails on one task: check `opentrain lint` before blaming the model; the verifier may
+- Every attempt fails on one task: check `tasks_lint` before blaming the model; the verifier may
   have broken (a dependency moved).
-- Attempts are slow because tools dominate: the time breakdown in `opentrain bench time` says so; a
+- Attempts are slow because tools dominate: the time breakdown in `sessions_scan` (CLI: `opentrain debug bench`) says so; a
   faster model cannot fix tool time.
 - Never sample held-out tasks. The tools refuse; do not try to work around it.

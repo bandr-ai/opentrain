@@ -6,6 +6,7 @@ steps: 40
 permissions:
   "*": deny
   "status": allow
+  "jobs": allow
   "job_status": allow
   "job_logs": allow
   "record_query": allow

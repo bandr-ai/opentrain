@@ -12,18 +12,18 @@ one proposed step, with its price, to approve, change or skip.
 $ opentrain web        # the web app (or: opentrain, for the terminal app)
 ```
 
-- **Any data.** A file you have (JSONL, JSON, CSV), a public Hugging Face dataset, examples the
-  agent writes with you from a description, a teacher model's answers (distillation), or your
-  coding-agent sessions when you ask for that.
+- **Two ways in.** Bring your data (traces, Q&A, documents, a CSV) and the agent checks how good
+  it is and turns it into the right tasks; or name a model and a use case and it finds the best
+  public data on Hugging Face and Kaggle. Either way you get a sealed eval set and a plan.
 - **Any way of checking an answer.** Exact, contains, a pattern, JSON, a number, a model judge with
-  your rubric, or your own script.
+  your rubric, your own script, or your environment as a Python `reward()`.
+- **Four ways to train.** SFT, rejection sampling, on-policy distillation from a bigger model of
+  the same family, and RL (GRPO). The recipe says which suit the task, with settings and a price.
 - **Any model to compare.** Evaluate Claude, GPT, an open model or your own trained versions on the
-  same held-out rows; the leaderboard tells you whether training is even worth it.
-- **Any compute.** Train and serve on your own Modal account (any GPU, per-second billing, scales
-  to zero), on Tinker, or on your own GPU. Base models are measured the same way:
-  `modal/Qwen/Qwen2.5-0.5B-Instruct` is a model you can evaluate before training it.
-- **Recipes, not guesses.** The training settings come from the task kind, the data size and the
-  model size, with distillation first when answers are missing.
+  same held-out rows; the scorecard tells you whether training is even worth it.
+- **Your compute.** Train and serve on your own Modal account or RunPod pods (any GPU, billed by
+  the second, stops when idle), on Fireworks' serverless training, on Tinker, or on your own GPU.
+  `modal/Qwen/Qwen3.5-4B` is a model you can evaluate before training it.
 - **Proof before shipping.** Part of every dataset is sealed from training. A version goes live only
   when it beats the baseline on those rows with nothing regressing.
 - **Use it from Claude Code.** `opentrain mcp --install` gives your Claude Code the same tools,
@@ -40,6 +40,48 @@ cd your-project && opentrain web
 Python 3.11+. The engine runs on whatever you already have: your own **Claude Code** login (no key
 needed), or an Anthropic, OpenAI, OpenRouter, Together, Groq or Fireworks key, or a local model.
 `/connect` adds keys; `/models` picks one.
+
+## Two ways in
+
+**"Here is my data."** Drop a file or name one. The agent reads it in batches until it can say how
+good it is (`data/triage`: what share of rows are right, the top problems with examples) and
+decides: train on it, filter it, relabel it with a strong teacher, or keep only the prompts. Raw
+material (documents, tables, tickets) is turned into tasks that fit what the model must do
+(`data/tasks`): open QA, short answers, extraction, labels, multiple choice, reasoning traces, or
+RL tasks with a checkable answer, built 20 rows at a time and checked by a strong model each batch.
+
+**"Make this model better at X."** No data needed. The agent searches Hugging Face and Kaggle with
+several phrasings, shortlists by fit, size and license, looks at the columns and example rows,
+imports a slice of the best fit, triages it, and keeps a separate public benchmark to measure on
+(`data/find`).
+
+These are skills: playbooks in `skills/` that the agent loads and follows as a loop with a tally
+and a stop rule. Add your own in `.opentrain/skills/`.
+
+## Training methods
+
+| Method | Learns from | Needs | Runs on |
+| --- | --- | --- | --- |
+| `sft` | the reference answers | answers | Modal, RunPod, Fireworks, Tinker, local |
+| `rejection` | the model's own answers that pass the grader | a grader that runs in the loop | Modal, RunPod, Fireworks |
+| `opd` | a bigger same-family teacher scoring each of the model's tokens | a teacher (picked for you) | Modal, RunPod |
+| `rl` | GRPO on the grader's score of the model's own samples | a grader that runs in the loop | Modal, RunPod, Fireworks |
+
+Graders that run in the loop: exact, contains, regex, json, number, and `python`, your own
+environment:
+
+```python
+# reward.py, in the project; grader {"type": "python", "path": "reward.py"}
+def reward(prompt: str, answer: str, reference: str | None) -> float:   # 0..1
+    ...
+```
+
+Its code goes to the GPU with every job. Before proposing RL the agent asks whether you have an
+environment, wraps it, and proves it on controls (the reference scores high, an empty or stuffed
+answer does not). Multi-turn environments are not supported in the loop yet.
+
+`dataset_recipe` returns the plan, the settings for each method and its cost, GPU and minutes on
+your trainer, so every proposal carries a real price.
 
 ## How it is built
 
@@ -118,6 +160,14 @@ server, which enforces the Trainfile's budget, keeps held-out rows sealed and re
 the gate rejects. Claude Code's own permission prompts are the approval. Its calls appear live in
 the web app as the "Claude Code (attached)" conversation, and the scorecard fills in as it works.
 
+## Training on RunPod
+
+`trainer runpod`. Sign in once in the browser with `opentrain login runpod` (the same flow as
+RunPod's own CLI; a key from `runpodctl` or `RUNPOD_API_KEY` also works). OpenTrain starts a pod on
+the vLLM image, trains there, keeps a copy of the adapter, and serves it from the same pod. Community
+cloud first, then secure. The pod deletes itself after 15 idle minutes (and after 12 hours in any
+case), so nothing bills on after OpenTrain is gone.
+
 ## Training on Modal
 
 `trainer modal` in the Trainfile. OpenTrain ships its trainer (TRL + PEFT LoRA) to a Modal GPU,
@@ -169,8 +219,8 @@ repo; edit it any time (or use `/trainer`).
 goal         draft our support replies as well as the current model, much cheaper
 budget       $40 a week, model tokens and compute together
 promote      beats current on held-out, no task regresses
-trainer      tinker
-base model   Qwen/Qwen3-8B
+trainer      modal
+base model   Qwen/Qwen3.5-4B
 heldout      30%
 eval cap     8 per run
 ```
@@ -187,6 +237,7 @@ eval cap     8 per run
 | `opentrain serve` | the server in the foreground (`--host`, `--password` for a remote box) |
 | `opentrain web` | the web app in a browser (one-time sign-in link) |
 | `opentrain mcp` | OpenTrain's tools for Claude Code or any MCP client (`--install` adds it to Claude Code) |
+| `opentrain login runpod` | sign in to RunPod in the browser |
 | `opentrain attach URL` | the terminal app against a server elsewhere |
 | `opentrain export` | tasks and training set in open formats, for any trainer |
 | `opentrain model serve` | a trained version as an OpenAI-compatible endpoint |
@@ -230,6 +281,10 @@ are in [docs/RECIPES.md](docs/RECIPES.md).
 | Mining tasks from Claude Code sessions | Runs on real logs; yield on real sessions is low (see docs/FINDINGS.md) |
 | Modal training and serving | **Run live**: Qwen2.5-0.5B on 54 rows, 28 steps on an L40S in 30 s for $0.02; held-out 42% → 100% (docs/RECIPES.md) |
 | Claude Code over MCP (`opentrain mcp`) | **Run live**: Claude Code evaluated, trained, waited and promoted through the tools |
+| Rejection sampling, on-policy distillation, RL on Modal | **Run live** on GSM8K with Qwen2.5-0.5B: each a few steps on an L40S for about $0.10 (smoke tests, not results) |
+| RunPod training and serving | Tested end to end against a fake RunPod API with the real agent and trainer; **no live pod run yet** |
+| Fireworks training (SFT, rejection, RL) | Tested against a fake SDK; **no live run yet** |
+| Dataset search (Hugging Face, Kaggle), Kaggle import | Search run live; Kaggle import tested against a recorded zip |
 | Tinker training | Written against SDK 0.40; **no real training run yet** (needs `TINKER_API_KEY`) |
 | Local training (TRL + PEFT) | Written; untested here |
 
