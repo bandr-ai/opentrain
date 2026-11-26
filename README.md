@@ -175,7 +175,9 @@ streams the loss back, and saves the adapter on a Modal volume. Serving is vLLM 
 per base model with every adapter trained on it, behind a key OpenTrain generates; it scales to
 zero, so the first call after idle waits for a cold start (about two minutes). GPUs are picked by
 model size with fallbacks (an L4 or A10 to serve a small model, an L40S or A100 to train it).
-Costs are measured GPU seconds at Modal's list price. A serving cost per answer is its share of
+Training runs as a detached Modal app: if your laptop loses its connection mid-run, the job goes on
+and OpenTrain picks its progress up again from a log kept on Modal. Costs are measured GPU seconds
+at Modal's list price. A serving cost per answer is its share of
 the GPU while it ran; at real traffic, with many requests batched, it is far lower.
 
 ## Agents
