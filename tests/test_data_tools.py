@@ -177,3 +177,16 @@ def test_rows_you_write_go_where_you_say(live):
     assert out["added_heldout"] == 10 and out["added_train"] == 0
     _, out = _call(c, "dataset_add", name="w", rows=[{"prompt": f"t{i}", "completion": "c"} for i in range(10)], heldout=0)
     assert out["added_train"] == 10 and out["added_heldout"] == 0
+
+
+def test_spent_and_held_are_told_apart(tmp_path):
+    from opentrain.budget import Ledger
+    from opentrain.trainfile import Budget
+
+    led = Ledger(tmp_path, Budget(2.0, 7, "$2 a week"))
+    a = led.reserve(1.5, "train")
+    b = led.reserve(0.1, "eval")
+    led.settle(b, 0.11)
+    assert led.reserved() == 1.5 and led.committed() == 1.61 and led.remaining() == 0.39
+    led.settle(a, 0.6)
+    assert led.reserved() == 0 and led.committed() == 0.71

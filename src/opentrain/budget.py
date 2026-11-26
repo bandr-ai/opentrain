@@ -47,6 +47,13 @@ class Ledger:
 
     def committed(self, run_id: str | None = None, now: datetime | None = None) -> float:
         """Settled spend plus open reservations, inside the current window (or the run, for a per-run budget)."""
+        return round(sum(s["amount"] for s in self._states(run_id, now).values()), 6)
+
+    def reserved(self, run_id: str | None = None, now: datetime | None = None) -> float:
+        """Held for work still running (its estimate), not yet spent."""
+        return round(sum(s["amount"] for s in self._states(run_id, now).values() if s["open"]), 6)
+
+    def _states(self, run_id: str | None = None, now: datetime | None = None) -> dict[str, dict]:
         now = now or datetime.now(timezone.utc)
         start = self._window_start(now)
         state: dict[str, dict] = {}
@@ -65,7 +72,7 @@ class Ledger:
                     state[e["id"]] = {"amount": e["usd"], "open": False}
                 elif e["op"] == "release":
                     state[e["id"]] = {"amount": 0.0, "open": False}
-        return round(sum(s["amount"] for s in state.values()), 6)
+        return state
 
     def remaining(self, run_id: str | None = None) -> float:
         return round(self.budget.dollars - self.committed(run_id), 6)

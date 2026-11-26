@@ -221,7 +221,7 @@ export default function App() {
           <span className="grow" />
           {running.length > 0 && <a className="busy-t" href="#/jobs"><span className="dot busy" /> {running.length} running</a>}
           {waiting && <span className="err"><span className="dot waiting" /> needs you</span>}
-          {b && <span className="budget" title={`${money(b.remaining_usd)} left of ${b.text}`}>{money(b.spent_usd)} <span className="faint">spent</span></span>}
+          {b && <span className="budget" title={`${money(b.remaining_usd)} left of ${b.text}${b.reserved_usd ? `; ${money(b.reserved_usd)} held for running jobs until they report their real cost` : ""}`}>{money(b.spent_usd)} <span className="faint">spent</span>{b.reserved_usd ? <> <span className="faint">· {money(b.reserved_usd)} held</span></> : null}</span>}
           <a className="toplink" href="#/jobs">jobs</a>
           <a className="toplink" href="#/settings">settings</a>
           <span className={`conn ${connected ? "" : "off"}`} title={connected ? "connected" : "reconnecting…"}><i /></span>

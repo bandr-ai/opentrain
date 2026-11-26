@@ -80,7 +80,9 @@ def board(state: Path, directory: Path, *, dataset: str | None = None, jobs: lis
     focus = next((s for s in summaries if s["name"] == name), None)
 
     ledger = Ledger(state, tf.budget)
-    budget = {"spent_usd": round(ledger.committed(), 4), "remaining_usd": round(ledger.remaining(), 4),
+    held = ledger.reserved()
+    budget = {"spent_usd": round(ledger.committed() - held, 4), "reserved_usd": round(held, 4),
+              "remaining_usd": round(ledger.remaining(), 4),
               "limit_usd": tf.budget.dollars, "text": tf.budget.describe()}
 
     versions = [v for v in reg.versions() if name and v.dataset == name]

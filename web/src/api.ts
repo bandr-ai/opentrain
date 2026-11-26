@@ -266,7 +266,7 @@ export type Board = {
   goal: string;
   trainfile: boolean;
   policy: { trainer: string; base_model: string };
-  budget: { spent_usd: number; remaining_usd: number; limit_usd: number; text: string };
+  budget: { spent_usd: number; reserved_usd?: number; remaining_usd: number; limit_usd: number; text: string };
   datasets: DatasetSummary[];
   dataset: string | null;
   focus: DatasetSummary | null;
