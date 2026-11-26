@@ -95,3 +95,31 @@ def test_the_entry_skills_ship_and_name_real_tools(live):
         assert used <= tools, (name, used - tools)
     r = c.post("/api/outside/call", {"name": "skill", "input": {"name": "data/find"}})
     assert not r["is_error"] and "dataset_search" in r["output"]
+
+
+def test_vision_language_bases_load_with_their_own_class(monkeypatch):
+    """Qwen3.5 / Gemma 3 checkpoints carry a vision config; the causal-LM class cannot read it."""
+    import sys
+    import types
+
+    from opentrain.backends.gpu_train import load_lm
+
+    class VLConfig:
+        vision_config = {"x": 1}
+        text_config = {"y": 2}
+
+    class TextConfig:
+        vocab_size = 10
+        vision_config = None
+
+    cfgs = {"Qwen/Qwen3.5-0.8B": VLConfig(), "Qwen/Qwen3-1.7B": TextConfig()}
+    used = []
+    fake = types.SimpleNamespace(
+        AutoConfig=types.SimpleNamespace(from_pretrained=lambda m: cfgs[m]),
+        AutoModelForCausalLM=types.SimpleNamespace(from_pretrained=lambda m, dtype=None: used.append(("lm", m))),
+        AutoModelForImageTextToText=types.SimpleNamespace(
+            from_pretrained=lambda m, dtype=None: used.append(("vl", m))))
+    monkeypatch.setitem(sys.modules, "transformers", fake)
+    load_lm("Qwen/Qwen3.5-0.8B", None)
+    load_lm("Qwen/Qwen3-1.7B", None)
+    assert used == [("vl", "Qwen/Qwen3.5-0.8B"), ("lm", "Qwen/Qwen3-1.7B")]

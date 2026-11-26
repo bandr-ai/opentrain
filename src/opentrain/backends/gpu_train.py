@@ -85,13 +85,28 @@ def text_of(messages: list[dict[str, Any]]) -> str:
     return "\n".join(str(m.get("content") or "") for m in messages if m.get("role") == "user")
 
 
+def load_lm(model_id: str, dtype):
+    """The model to train, as SFT (TRL) loads it: vision-language checkpoints (Qwen3.5, Gemma 3) with
+    their image-text class, so the weights land where they are and the adapter serves on vLLM like an
+    SFT one; text-only checkpoints with the causal-LM class. Text in, logits out, either way."""
+    from transformers import AutoConfig, AutoModelForCausalLM
+
+    cfg = AutoConfig.from_pretrained(model_id)
+    if getattr(cfg, "vision_config", None) is not None or (getattr(cfg, "text_config", None) is not None
+                                                            and not hasattr(cfg, "vocab_size")):
+        from transformers import AutoModelForImageTextToText
+
+        return AutoModelForImageTextToText.from_pretrained(model_id, dtype=dtype)
+    return AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype)
+
+
 class Policy:
     """The trainable model (base + LoRA), its optimizer, and a sampler that follows its weights."""
 
     def __init__(self, spec: dict[str, Any], out_dir: str, log: Callable[[str], None]):
         import torch
         from peft import LoraConfig, get_peft_model
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoTokenizer
 
         self.spec, self.out_dir, self.log = spec, out_dir, log
         self.s = settings(spec)
@@ -105,7 +120,7 @@ class Policy:
         self.lora_dir: str | None = None
         if self.device == "cuda" and spec.get("method") != "sft" and not self.s.get("no_vllm"):
             self._start_vllm()  # before the training model, so vLLM sizes its memory against a free GPU
-        model = AutoModelForCausalLM.from_pretrained(spec["base_model"], dtype=self.dtype).to(self.device)
+        model = load_lm(spec["base_model"], self.dtype).to(self.device)
         model.config.use_cache = False
         if self.device == "cuda":
             model.gradient_checkpointing_enable()
@@ -395,7 +410,7 @@ def _rl(pol, items, s, emit, grade, rng, t0):
 
 def _opd(pol, items, s, emit, grade, rng, t0):
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoTokenizer
 
     teacher_id = s.get("teacher")
     if not teacher_id:
@@ -405,7 +420,7 @@ def _opd(pol, items, s, emit, grade, rng, t0):
     if ttok.encode(probe, add_special_tokens=False) != pol.tok.encode(probe, add_special_tokens=False):
         raise ValueError(f"teacher {teacher_id} tokenizes differently from {pol.spec['base_model']}; "
                          "on-policy distillation needs a teacher of the same family")
-    teacher = AutoModelForCausalLM.from_pretrained(teacher_id, dtype=pol.dtype).to(pol.device).eval()
+    teacher = load_lm(teacher_id, pol.dtype).to(pol.device).eval()
     emit({"event": "log", "note": f"teacher {teacher_id} loaded", "seconds": round(time.time() - t0, 1)})
     steps, n, k = int(s["steps"]), int(s["prompts_per_step"]), int(s["samples"])
     lr = float(pol.spec["learning_rate"])
