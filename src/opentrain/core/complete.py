@@ -148,8 +148,7 @@ def _openai(ep, label: str, messages, max_tokens, timeout, t0, host: tuple[str, 
     try:
         if host:
             with mod.answering(host[1]) as cost_of_answer:
-                with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
-                    out = json.loads(r.read().decode())
+                out = _rollout_safe(req, timeout)
                 cost_of = cost_of_answer()
         else:
             with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
@@ -161,6 +160,26 @@ def _openai(ep, label: str, messages, max_tokens, timeout, t0, host: tuple[str, 
     return Completion(text=THINK.sub("", text), seconds=time.time() - t0, cost=cost_of or 0.0,
                       input_tokens=u.get("prompt_tokens", 0) or 0, output_tokens=u.get("completion_tokens", 0) or 0,
                       billing=f"{host[0]}-gpu" if host else "api")
+
+
+ROLLOUT_SECONDS = 240
+
+
+def _rollout_safe(req, timeout: float) -> dict:
+    """POST to an endpoint on the user's GPU account. While a new adapter rolls out, a request can
+    reach a container that does not have it yet (404) or one that is starting (502/503): wait and
+    retry instead of scoring that row as a wrong answer."""
+    import urllib.error
+
+    end = time.time() + ROLLOUT_SECONDS
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+                return json.loads(r.read().decode())
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (404, 502, 503) or time.time() > end:
+                raise
+            time.sleep(10)
 
 
 def _flatten(messages: list[dict[str, str]]) -> tuple[str, str]:

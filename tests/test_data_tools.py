@@ -138,3 +138,33 @@ def test_recipe_prices_the_overrides_you_will_run(live, monkeypatch):
     _, one = _call(c, "dataset_recipe", name="ov", epochs=1, learning_rate=5e-5)
     assert one["epochs"] == 1 and one["learning_rate"] == 5e-5 and one["overridden"] == ["epochs", "learning_rate"]
     assert "usd" in base["cost"] and one["cost"]["usd"] <= base["cost"]["usd"]
+
+
+def test_a_rollout_404_is_retried_not_scored(monkeypatch):
+    import io
+    import urllib.error
+
+    from opentrain.core import complete
+
+    calls = []
+
+    class R(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(req, timeout=None):
+        calls.append(1)
+        if len(calls) < 3:
+            raise urllib.error.HTTPError("u", 404, "Not Found", {}, io.BytesIO(b"{}"))
+        return R(b'{"choices": [{"message": {"content": "B"}}]}')
+
+    monkeypatch.setattr(complete.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(complete.time, "sleep", lambda s: None)
+    assert complete._rollout_safe(object(), 5)["choices"][0]["message"]["content"] == "B" and len(calls) == 3
+    calls.clear()
+    monkeypatch.setattr(complete, "ROLLOUT_SECONDS", -1)
+    with pytest.raises(urllib.error.HTTPError):
+        complete._rollout_safe(object(), 5)
