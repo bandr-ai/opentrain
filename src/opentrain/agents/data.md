@@ -23,6 +23,10 @@ permissions:
   "datasets": allow
   "dataset_show": allow
   "dataset_import": allow
+  "dataset_search": allow
+  "dataset_peek": allow
+  "dataset_recipe": allow
+  "evals": allow
   "dataset_add": allow
   "dataset_edit": allow
   "todo": allow

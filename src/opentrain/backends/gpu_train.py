@@ -442,8 +442,13 @@ def grader_fn(grader: dict[str, Any] | None):
         return None
     try:
         from graders import grade as g  # shipped next to this file
+        from graders import load_reward
     except ImportError:
         from opentrain.graders import grade as g
+        from opentrain.graders import load_reward
+    if grader.get("type") == "python":  # the user's environment: in process, its source came with the job
+        fn = load_reward(grader["source"], grader.get("function", "reward"))
+        return lambda prompt, answer, ref: fn(prompt, answer, ref)[0]
     return lambda prompt, answer, ref: g(grader, prompt, answer, ref).score
 
 

@@ -145,6 +145,7 @@ const GRADERS = [
   { type: "json", label: "JSON", help: "The answer parses as JSON equal to the reference's. For extraction." },
   { type: "regex", label: "Pattern", help: "The answer matches a regular expression." },
   { type: "command", label: "Script", help: "Your script reads {prompt, answer, reference} as JSON on stdin; exit 0 passes or print a 0-1 score." },
+  { type: "python", label: "Reward function", help: "Your environment: a .py file with reward(prompt, answer, reference) returning 0-1. Also runs inside RL and rejection sampling on the GPU." },
 ];
 
 export function DatasetView({ name, onNew }: { name: string; onNew?: () => void }) {
@@ -345,7 +346,11 @@ export function GraderModal({ name, spec, system, description, onClose, onSaved 
         <label className="field"><span>Command</span><input className="input mono" value={s.command || ""} onChange={(e) => setS({ ...s, command: e.target.value })} placeholder="python grade.py" />
           <small>Runs in the project folder, in the sandbox.</small></label>
       )}
-      {(s.type === "judge" || s.type === "command") && (
+      {s.type === "python" && (
+        <label className="field"><span>Reward file</span><input className="input mono" value={s.path || ""} onChange={(e) => setS({ ...s, path: e.target.value })} placeholder="reward.py" />
+          <small>In the project folder; defines reward(prompt, answer, reference). Its code goes to the GPU with RL jobs.</small></label>
+      )}
+      {(s.type === "judge" || s.type === "command" || s.type === "python") && (
         <label className="field"><span>Pass when the score is at least</span><input className="input" type="number" step="0.05" min="0" max="1" value={s.threshold ?? 0.7} onChange={(e) => setS({ ...s, threshold: Number(e.target.value) })} /></label>
       )}
       <label className="field"><span>System prompt the model gets on every row</span>

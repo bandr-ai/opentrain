@@ -34,7 +34,7 @@ METHODS = {
            "by token",
     "rl": "GRPO: sample a group per prompt, reward = grader score, push toward the better-than-average answers",
 }
-GRADED_HERE = ("exact", "contains", "regex", "json", "number")
+GRADED_HERE = ("exact", "contains", "regex", "json", "number", "python")
 """Graders that run inside the training loop (rejection sampling and RL need a score per sample)."""
 
 # Student -> same-tokenizer teacher for on-policy distillation (a larger model of the same family,

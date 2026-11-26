@@ -193,9 +193,9 @@ export function AgentPanel({ convo = true }: { convo?: boolean }) {
 }
 
 const STARTERS: [string, string][] = [
+  ["improve a model for my use case", "Find the best public data on Hugging Face and Kaggle and make this model better at it. Model: Qwen/Qwen3.5-4B. Use case: "],
+  ["train on my data", "I have data for this (I'll drop the file in or point to it). Check how good it is, turn it into the right tasks, then train: "],
   ["find the cheapest model that does my job", "Compare a few models on my examples, including a small cheap one, and tell me which is good enough and what each costs: "],
-  ["fine-tune on a file of examples", "I have a file of examples (I'll drop it in). Measure a baseline, then fine-tune a small open model on it only if that's worth it."],
-  ["start from a Hugging Face dataset", "Use the Hugging Face dataset "],
   ["build the data with me", "Help me build a dataset for this from scratch: "],
 ];
 

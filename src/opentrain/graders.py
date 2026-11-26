@@ -11,6 +11,11 @@ A dataset names its grader in ``meta.json``::
      "model": "claude-code/haiku"}             0-10, scaled to [0, 1]
     {"type": "command", "command": "..."}      a script: JSON {prompt, answer, reference} on stdin;
                                                exit 0 passes, or it prints a score on its last line
+    {"type": "python", "path": "reward.py"}    your environment's reward: a file in the project with
+                                               ``def reward(prompt, answer, reference)`` returning a
+                                               0-1 score (or a bool, or ``(score, reason)``). Unlike a
+                                               command it also runs inside the RL and rejection loops:
+                                               its source travels with the job to the GPU.
 
 ``passed`` is ``score >= threshold`` (default 1.0 for exact kinds, 0.7 for the judge and scripts).
 """
@@ -25,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-KINDS = ("exact", "contains", "regex", "json", "number", "judge", "command")
+KINDS = ("exact", "contains", "regex", "json", "number", "judge", "command", "python")
 JUDGE_PROMPT = """You are grading one answer. Be strict and consistent.
 
 Rubric:
@@ -70,6 +75,13 @@ def check(spec: dict[str, Any]) -> dict[str, Any]:
             raise GraderError(f"bad pattern: {exc}") from None
     if spec["type"] == "command" and not spec.get("command"):
         raise GraderError("a command grader needs a command")
+    if spec["type"] == "python":
+        if not spec.get("path") and not spec.get("source"):
+            raise GraderError("a python grader needs path: a .py file defining reward(prompt, answer, reference)")
+        try:
+            compile(spec.get("source") or "", spec.get("path") or "reward.py", "exec")
+        except SyntaxError as exc:
+            raise GraderError(f"the reward file does not parse: {exc}") from None
     return spec
 
 
@@ -100,7 +112,7 @@ def _last_number(s: str) -> float | None:
 def grade(spec: dict[str, Any], prompt: str, answer: str, reference: str | None, *,
           directory: Path | None = None, default_model: str | None = None) -> Grade:
     kind = spec.get("type")
-    thr = float(spec.get("threshold", 0.7 if kind in ("judge", "command") else 1.0))
+    thr = float(spec.get("threshold", 0.7 if kind in ("judge", "command", "python") else 1.0))
     if needs_reference(spec) and reference is None:
         raise GraderError(f"the {kind} grader needs a reference answer; this row has none")
     if kind == "exact":
@@ -131,6 +143,8 @@ def grade(spec: dict[str, Any], prompt: str, answer: str, reference: str | None,
         return _judge(spec, prompt, answer, reference, thr, default_model)
     if kind == "command":
         return _command(spec, prompt, answer, reference, thr, directory)
+    if kind == "python":
+        return _python(spec, prompt, answer, reference, thr, directory)
     raise GraderError(f"unknown grader {kind!r}")
 
 
@@ -171,12 +185,78 @@ def _command(spec, prompt, answer, reference, thr, directory) -> Grade:
     return Grade(s, s >= thr, (p.stderr.strip() or last)[-200:] if s < thr else "")
 
 
+def reward_source(spec: dict[str, Any], directory: Path | None) -> str:
+    """The python grader's code: carried in the spec (on a GPU), else read from the project."""
+    if spec.get("source"):
+        return spec["source"]
+    path = Path(spec["path"]).expanduser()
+    path = path if path.is_absolute() or directory is None else Path(directory) / path
+    try:
+        return path.read_text()
+    except OSError as exc:
+        raise GraderError(f"cannot read the reward file {path}: {exc}") from None
+
+
+def load_reward(source: str, function: str = "reward"):
+    """``reward(prompt, answer, reference) -> (score in [0, 1], reason)``, from the file's source."""
+    ns: dict[str, Any] = {"__name__": "opentrain_reward"}
+    exec(compile(source, "reward.py", "exec"), ns)  # noqa: S102 - the user's own reward file
+    fn = ns.get(function)
+    if not callable(fn):
+        raise GraderError(f"the reward file defines no function {function}(prompt, answer, reference)")
+
+    def call(prompt: str, answer: str, reference: str | None) -> tuple[float, str]:
+        out = fn(prompt, answer, reference)
+        reason = ""
+        if isinstance(out, (tuple, list)):
+            out, reason = out[0], str(out[1]) if len(out) > 1 else ""
+        return max(0.0, min(1.0, float(out))), reason
+
+    return call
+
+
+_RUNNER = """
+import json, sys
+sys.path.insert(0, %r)
+from opentrain.graders import load_reward
+job = json.load(sys.stdin)
+score, reason = load_reward(job["source"], job["function"])(job["prompt"], job["answer"], job["reference"])
+print(json.dumps({"score": score, "reason": reason}))
+"""
+
+
+def _python(spec, prompt, answer, reference, thr, directory) -> Grade:
+    """Here (evals), in a child process so a bad reward cannot take the server down; on the GPU,
+    ``gpu_train`` calls ``load_reward`` in process."""
+    import sys
+
+    from .core.sandbox import wrap
+
+    src = reward_source(spec, directory)
+    pkg = str(Path(__file__).resolve().parent.parent)
+    try:
+        p = subprocess.run(wrap([sys.executable, "-c", _RUNNER % pkg]),
+                           input=json.dumps({"source": src, "function": spec.get("function", "reward"),
+                                             "prompt": prompt, "answer": answer, "reference": reference}),
+                           capture_output=True, text=True, timeout=float(spec.get("timeout", 60)),
+                           cwd=str(directory) if directory else None)
+    except subprocess.TimeoutExpired:
+        return Grade(0.0, False, "reward timed out")
+    if p.returncode != 0:
+        return Grade(0.0, False, "reward failed: " + (p.stderr.strip().splitlines() or ["?"])[-1][:200])
+    out = json.loads(p.stdout.strip().splitlines()[-1])
+    s = float(out["score"])
+    return Grade(s, s >= thr, out.get("reason", "")[:200] if s < thr else "")
+
+
 def describe(spec: dict[str, Any]) -> str:
     k = spec.get("type")
     if k == "judge":
         return f"judged by {spec.get('model') or 'the default model'}" + (" with a rubric" if spec.get("rubric") else "")
     if k == "command":
         return f"script: {spec.get('command') if isinstance(spec.get('command'), str) else shlex.join(spec['command'])}"
+    if k == "python":
+        return f"reward function in {spec.get('path') or 'the job'}"
     if k == "regex" and spec.get("pattern"):
         return f"matches /{spec['pattern']}/"
     return {"exact": "exact match", "contains": "contains the reference", "regex": "matches the reference",

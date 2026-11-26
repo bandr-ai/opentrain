@@ -27,6 +27,10 @@ PROTOCOL = "2025-06-18"
 INSTRUCTIONS = """OpenTrain post-trains models: it measures models on a dataset's sealed held-out rows,
 trains a small open model when that is worth it, and ships it only if it beats the baseline.
 
+Two ways in, each a skill to load with the skill tool and follow: the user brings data (data/tasks,
+and data/triage for traces), or names a model and a use case without data (data/find:
+dataset_search and dataset_peek over Hugging Face and Kaggle). Before RL, train/env.
+
 Typical path: datasets / dataset_import (a file, hf= or kaggle=) -> dataset_edit (grader; the import
 suggests one) -> dataset_eval a strong model and a small one (modal/<hf id> runs open models on the
 user's Modal account) -> trainer_set (where and what to train) -> dataset_recipe (settings, the plan

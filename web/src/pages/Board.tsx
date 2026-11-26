@@ -202,6 +202,7 @@ const GRADER_HELP: [string, string][] = [
   ["json", "structured output: parses and matches the fields"],
   ["judge", "open answers: a model scores against a rubric, 0 to 10"],
   ["command", "a script you trust decides (tests, validators)"],
+  ["python", "your environment's reward(prompt, answer, reference): also drives RL"],
 ];
 
 function GradeStage({ board }: { board: BoardT }) {

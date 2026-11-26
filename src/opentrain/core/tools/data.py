@@ -343,12 +343,40 @@ def recipe_for(ctx: ToolContext, name: str, method: str | None = None) -> dict[s
     rows = _err(ds.rows)(name)
     refs = [reference_of(r) for r in rows]
     grader = ds.meta(name).get("grader")
+    if (grader or {}).get("type") == "python":  # the reward's code goes to the GPU with the job
+        from ...graders import GraderError, reward_source
+
+        try:
+            grader = {**grader, "source": reward_source(grader, ctx.project.directory)}
+        except GraderError as exc:
+            raise ToolError(str(exc)) from None
     kind = task_kind(grader, [x for x in refs if x])
     try:
         return recipe(kind, len(rows), _tf(ctx).base_model, labelled=sum(1 for x in refs if x), method=method,
                       grader=grader)
     except ValueError as exc:
         raise ToolError(str(exc)) from None
+
+
+async def dataset_search(ctx: ToolContext, query: str, source: str = "both", limit: int = 8) -> Any:
+    from ...datasets import search_hf, search_kaggle
+
+    limit = max(1, min(int(limit), 20))
+    out: dict[str, Any] = {"query": query}
+    for name, fn in (("hf", search_hf), ("kaggle", search_kaggle)):
+        if source in (name, "both"):
+            try:
+                out[name] = await asyncio.to_thread(fn, query, limit)
+            except Exception as exc:  # noqa: BLE001 - one source down must not hide the other
+                out[name] = {"error": f"{type(exc).__name__}: {exc}"}
+    out["next"] = "dataset_peek the promising ones (hf), then dataset_import a small slice (limit 200) to look at"
+    return out
+
+
+async def dataset_peek(ctx: ToolContext, hf: str) -> Any:
+    from ...datasets import peek_hf
+
+    return await asyncio.to_thread(_err(peek_hf), hf)
 
 
 def dataset_recipe(ctx: ToolContext, name: str, method: str | None = None) -> Any:
@@ -416,6 +444,12 @@ def tools() -> list[Tool]:
     T = lambda *a, **k: Tool(*a, group="data", **k)  # noqa: E731
     obj = {"type": "object"}
     return [
+        T("dataset_search", "Find public datasets for a use case on Hugging Face and Kaggle: id, downloads, size, "
+          "license, tasks. Search several phrasings (the task, the domain, benchmark names).",
+          S({"query": {"type": "string"}, "source": {"type": "string", "enum": ["both", "hf", "kaggle"]},
+             "limit": {"type": "integer"}}, ["query"]), dataset_search, title=lambda a: a["query"]),
+        T("dataset_peek", "A Hugging Face dataset before importing it: configs, splits with row counts, columns "
+          "and three example rows.", S({"hf": {"type": "string"}}, ["hf"]), dataset_peek, title=lambda a: a["hf"]),
         T("dataset_recipe", "The tested training recipe for a dataset, with its cost on the Trainfile's trainer: task kind, the plan (which methods suit it, in "
           "order: sft, opd = on-policy distillation, rl = GRPO, rejection = rejection sampling), the settings for "
           "one method (default: the plan's first), what to do first and what to try if the run does not beat the "

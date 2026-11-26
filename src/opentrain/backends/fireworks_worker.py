@@ -115,7 +115,7 @@ def run_loop(store: JobStore, job: dict[str, Any]) -> None:
     s = settings({"method": spec.method, "extra": spec.extra})
     grade = grader_fn(spec.extra.get("grader"))
     if grade is None:
-        raise RuntimeError(f"{spec.method} needs a grader that runs in the loop (exact, contains, regex, json, number)")
+        raise RuntimeError(f"{spec.method} needs a grader that runs in the loop (exact, contains, regex, json, number, python)")
     train_price, sample_price = float(job["usd_per_mtok"]), float(job.get("usd_per_mtok_sample") or 0)
     base = f"accounts/fireworks/models/{job['fireworks_model']}"
     tok = AutoTokenizer.from_pretrained(job["tokenizer"])

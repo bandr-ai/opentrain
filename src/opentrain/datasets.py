@@ -209,6 +209,61 @@ def read_hf(dataset: str, *, split: str | None = None, config: str | None = None
     return rows, {"hf": dataset, "config": s["config"], "split": s["split"]}
 
 
+HF_API = "https://huggingface.co/api"
+
+
+def _tag(tags: list[str], prefix: str) -> list[str]:
+    return [t.split(":", 1)[1] for t in tags if t.startswith(prefix + ":")]
+
+
+def search_hf(query: str, limit: int = 8, fetch=_get_json) -> list[dict[str, Any]]:
+    """Public Hugging Face datasets matching ``query``, most downloaded first."""
+    q = urllib.parse.quote
+    found = fetch(f"{HF_API}/datasets?search={q(query)}&sort=downloads&direction=-1&limit={int(limit) * 2}")
+    out = []
+    for d in found or []:
+        if d.get("private") or d.get("disabled"):
+            continue
+        tags = d.get("tags") or []
+        out.append({"source": "hf", "id": d["id"], "downloads": d.get("downloads", 0), "likes": d.get("likes", 0),
+                    "gated": bool(d.get("gated")), "size": (_tag(tags, "size_categories") or [""])[0],
+                    "license": (_tag(tags, "license") or [""])[0], "tasks": _tag(tags, "task_categories")[:4],
+                    "languages": _tag(tags, "language")[:4],
+                    "about": " ".join((d.get("description") or "").split())[:240]})
+    return out[: int(limit)]
+
+
+def search_kaggle(query: str, limit: int = 8, fetch=_get_json) -> list[dict[str, Any]]:
+    """Public Kaggle datasets matching ``query``, most voted first (no key needed to search)."""
+    found = fetch(f"{KAGGLE}/datasets/list?search={urllib.parse.quote(query)}&sortBy=votes")
+    out = []
+    for d in (found or [])[: int(limit)]:
+        out.append({"source": "kaggle", "id": d.get("ref"), "title": d.get("title") or d.get("titleNullable"),
+                    "downloads": d.get("downloadCount", 0), "votes": d.get("voteCount", 0),
+                    "bytes": d.get("totalBytes") or d.get("totalBytesNullable"),
+                    "license": d.get("licenseName") or d.get("licenseNameNullable") or "",
+                    "usability": round(float(d.get("usabilityRating") or d.get("usabilityRatingNullable") or 0), 2),
+                    "about": " ".join((d.get("subtitle") or d.get("subtitleNullable") or "").split())[:240]})
+    return out
+
+
+def peek_hf(dataset: str, fetch=_get_json) -> dict[str, Any]:
+    """Before importing: configs and splits with row counts, the columns, and three example rows."""
+    q = urllib.parse.quote
+    info = (fetch(f"{HF_ROWS}/info?dataset={q(dataset)}") or {}).get("dataset_info") or {}
+    if not info:
+        raise DatasetError(f"Hugging Face shows nothing for {dataset!r} (private, gated or not converted)")
+    configs = {name: {"splits": {k: v.get("num_examples") for k, v in (c.get("splits") or {}).items()},
+                      "columns": {k: (v.get("dtype") or v.get("_type")) for k, v in (c.get("features") or {}).items()}}
+               for name, c in list(info.items())[:8]}
+    first = next(iter(configs))
+    split = "train" if "train" in configs[first]["splits"] else next(iter(configs[first]["splits"]), "train")
+    rows = fetch(f"{HF_ROWS}/first-rows?dataset={q(dataset)}&config={q(first)}&split={q(split)}") or {}
+    sample = [{k: (str(v)[:400] if not isinstance(v, (int, float, bool)) else v) for k, v in r["row"].items()}
+              for r in (rows.get("rows") or [])[:3]]
+    return {"dataset": dataset, "configs": configs, "sample": {"config": first, "split": split, "rows": sample}}
+
+
 KAGGLE = "https://www.kaggle.com/api/v1"
 TABULAR = (".csv", ".tsv", ".jsonl", ".ndjson", ".json")
 
