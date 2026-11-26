@@ -63,6 +63,23 @@ async def tool_call(request: web.Request):
     return ok({"output": res.output, "is_error": bool(res.metadata.get("error"))})
 
 
+@routes.get("/api/outside/tools")
+async def outside_tools(request: web.Request):
+    """The tools an agent outside OpenTrain may call through ``opentrain mcp``."""
+    p = project_of(request)
+    return ok([t.spec() for t in p.services["runner"].tools_for(p.services["agents"].get("outside"))])
+
+
+@routes.post("/api/outside/call")
+async def outside_call(request: web.Request):
+    b = await body_of(request)
+    try:
+        res = await _runner(request).outside_call(b.get("name", ""), b.get("input") or {})
+    except Exception as exc:
+        return ok({"output": str(exc), "is_error": True})
+    return ok({"output": res.output, "is_error": bool(res.metadata.get("error"))})
+
+
 @routes.get("/api/agent")
 async def agents(request: web.Request):
     return ok([a.public() for a in project_of(request).services["agents"].list()])

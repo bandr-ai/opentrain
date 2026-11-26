@@ -25,7 +25,7 @@ from typing import Any
 
 from .. import __version__
 
-VERBS = ("run", "serve", "web", "attach", "pair", "stop", "export", "watch", "model", "debug", "help")
+VERBS = ("run", "serve", "web", "mcp", "attach", "pair", "stop", "export", "watch", "model", "debug", "help")
 
 
 def _client(directory: Path, url: str | None = None, password: str | None = None):
@@ -204,6 +204,31 @@ def cmd_stop(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp(a: argparse.Namespace) -> int:
+    """OpenTrain's tools for Claude Code (or any MCP client), against this project's server."""
+    import os
+    import shutil
+    import subprocess
+
+    directory = Path(a.dir).resolve()
+    if a.install:
+        claude = shutil.which("claude")
+        if not claude:
+            print("Claude Code is not installed (https://claude.com/claude-code)", file=sys.stderr)
+            return 1
+        cmd = [claude, "mcp", "add", "--scope", a.scope, "opentrain", "--", "opentrain", "mcp", "--dir", str(directory)]
+        r = subprocess.run(cmd, cwd=directory)
+        if r.returncode == 0:
+            print("Added. In Claude Code, ask for example: \"use opentrain to find the cheapest model that handles "
+                  "my data\". Watch it in the browser with: opentrain web")
+        return r.returncode
+    from ..core.bridge import Bridge
+
+    os.environ["OPENTRAIN_DIRECTORY"] = str(directory)
+    Bridge(outside=True).serve()
+    return 0
+
+
 def cmd_attach(a: argparse.Namespace) -> int:
     return _tui(Path(a.dir).resolve(), a.url, a.password, a.session, None)
 
@@ -268,6 +293,13 @@ def parser() -> argparse.ArgumentParser:
     w.add_argument("--no-open", action="store_true", help="print the link only")
     server_opts(w)
     w.set_defaults(fn=cmd_web)
+
+    mc = sub.add_parser("mcp", help="OpenTrain's tools for Claude Code or any MCP client (stdio)")
+    mc.add_argument("--install", action="store_true", help="add it to Claude Code (claude mcp add) and exit")
+    mc.add_argument("--scope", default="project", choices=["local", "project", "user"],
+                    help="Claude Code config scope for --install (default: project, in .mcp.json)")
+    mc.add_argument("--dir", default=".", help="the project (default: here)")
+    mc.set_defaults(fn=cmd_mcp)
 
     at = sub.add_parser("attach", help="the terminal app against a server elsewhere")
     at.add_argument("url")

@@ -27,7 +27,9 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -66,6 +68,10 @@ class Turn:
     reasoning: str = ""
     recent: list[str] = field(default_factory=list)  # doom-loop hashes
     process: Any = None  # an agent provider's subprocess
+
+
+# outside agents get no system reminders: tell them to check instead of waiting for one
+OUTSIDE_WAIT = re.compile(r"(?i)you will get a system reminder[^.]*\.(\s*Do not poll\.)?")
 
 
 def _now() -> float:
@@ -430,6 +436,33 @@ class Runner:
         part = self._tool_part(turn, name, args, call_id)
         result = await self._execute(turn, agent, name, args, call_id, part)
         return result
+
+    async def outside_call(self, name: str, args: dict[str, Any]) -> ToolResult:
+        """A tool call from an agent outside OpenTrain (``opentrain mcp``), recorded as one message in
+        the project's "outside" session so the web app shows it like any other step."""
+        sid = self.outside_session()
+        agent = self.project.services["agents"].get("outside")
+        call_id = f"out_{uuid.uuid4().hex[:16]}"
+        msg = self.store.create("message", {"session_id": sid, "role": "assistant", "agent": "outside",
+                                            "model": "outside", "time": {"created": _now()},
+                                            "tokens": {"input": 0, "output": 0}, "cost": 0.0})
+        turn = Turn(session_id=sid, message_id=msg["id"])
+        part = self._tool_part(turn, name, args, call_id)
+        try:
+            res = await self._execute(turn, agent, name, args, call_id, part)
+            res.output = OUTSIDE_WAIT.sub("It runs on the OpenTrain server: wait for it with job_wait (training and "
+                                          "cold starts take minutes).", res.output)
+            return res
+        finally:
+            self.store.update("message", msg["id"], {"finish": "stop", "time": {"completed": _now()}})
+            self.store.update("session", sid, {"time": {"updated": _now()}})
+
+    def outside_session(self) -> str:
+        for s in self.project.sessions():
+            if (s.get("metadata") or {}).get("outside"):
+                return s["id"]
+        return self.project.create_session(title="Claude Code (attached)", agent="outside",
+                                           metadata={"outside": True})["id"]
 
     # ------------------------------------------------------------------ history
 

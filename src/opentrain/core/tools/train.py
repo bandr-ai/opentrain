@@ -9,6 +9,7 @@ once; the job reports back into the session when it ends.
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 
@@ -329,6 +330,17 @@ def job_status(ctx: ToolContext, job_id: str) -> Any:
                                   "version", "error", "result", "time")}
 
 
+async def job_wait(ctx: ToolContext, job_id: str, timeout: int = 600) -> Any:
+    """Block until a job ends or ``timeout`` seconds pass (at most 15 minutes), then report it.
+    For agents outside OpenTrain, which get no reminder when a job ends."""
+    end = time.time() + max(5, min(int(timeout), 900))
+    while True:
+        j = await asyncio.to_thread(job_status, ctx, job_id)
+        if j["state"] in ("succeeded", "failed", "cancelled") or time.time() >= end or ctx.abort.is_set():
+            return {**j, "waited": "finished" if j["state"] != "running" else "timed out; call job_wait again"}
+        await asyncio.sleep(3)
+
+
 def job_logs(ctx: ToolContext, job_id: str, tail: int = 80) -> ToolResult:
     lines = _jobs(ctx).logs(job_id, max(1, min(int(tail), 1000)))
     return ToolResult("\n".join(lines) or "(no log lines yet)", title=f"logs {job_id}")
@@ -483,6 +495,9 @@ def tools() -> list[Tool]:
         T("jobs", "List jobs (mining, sampling, scoring, training).", S({"active_only": {"type": "boolean"}}), jobs_list),
         T("job_status", "One job's state, progress, cost and result.", S({"job_id": {"type": "string"}}, ["job_id"]),
           job_status),
+        T("job_wait", "Wait until a job ends (or up to `timeout` seconds, default 600) and return its result. Use it "
+          "instead of polling job_status.", S({"job_id": {"type": "string"}, "timeout": {"type": "integer"}},
+                                              ["job_id"]), job_wait),
         T("job_logs", "The last lines of a job's log.", S({"job_id": {"type": "string"}, "tail": {"type": "integer"}},
                                                          ["job_id"]), job_logs),
         T("job_stop", "Cancel a job.", S({"job_id": {"type": "string"}}, ["job_id"]), job_stop,

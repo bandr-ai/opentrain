@@ -102,8 +102,11 @@ class Permissions:
         rules = self.rules(agent)
         if evaluate(rules, tool, "*") != "deny":
             return False
+        # a narrower rule opens it only if it comes after the last blanket deny (later rules win)
+        last = max((i for i, r in enumerate(rules) if fnmatch.fnmatchcase(tool, r["action"])
+                    and r.get("resource", "*") in ("*", "**") and r["effect"] == "deny"), default=-1)
         return not any(fnmatch.fnmatchcase(tool, r["action"]) and r.get("resource", "*") not in ("*", "**")
-                       and r["effect"] != "deny" for r in rules)
+                       and r["effect"] != "deny" for r in rules[last + 1:])
 
     # ------------------------------------------------------------------ asking
 

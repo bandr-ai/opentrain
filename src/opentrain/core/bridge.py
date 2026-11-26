@@ -24,19 +24,39 @@ from ..client import Client, ClientError
 PROTOCOL = "2025-06-18"
 
 
+INSTRUCTIONS = """OpenTrain post-trains models: it measures models on a dataset's sealed held-out rows,
+trains a small open model when that is worth it, and ships it only if it beats the baseline.
+
+Typical path: datasets / dataset_import -> dataset_edit (grader) -> dataset_eval a strong model and
+a small one (modal/<hf id> runs open models on the user's Modal account) -> dataset_recipe ->
+dataset_label (distil missing answers) -> dataset_train -> dataset_eval the new version ->
+dataset_promote. Jobs run on the OpenTrain server and return at once: wait for one with job_wait
+(it blocks until the job ends), or look with jobs / job_status. The user watches the same project in the OpenTrain web app (opentrain web).
+Ask the user before any call that spends money, uploads data, trains or changes what is live.
+The server enforces the budget and never lets anyone read held-out rows."""
+
+
 class Bridge:
-    def __init__(self) -> None:
+    def __init__(self, outside: bool = False) -> None:
         env = os.environ
-        self.client = Client(env["OPENTRAIN_SERVER"], env["OPENTRAIN_SERVER_PASSWORD"], env["OPENTRAIN_DIRECTORY"])
-        self.session = env["OPENTRAIN_SESSION"]
+        self.outside = outside
+        if outside:  # an agent outside OpenTrain, in this directory, against the user's server
+            from ..client import connect
+
+            self.client = connect(env.get("OPENTRAIN_DIRECTORY") or os.getcwd())
+            self.session = ""
+        else:
+            self.client = Client(env["OPENTRAIN_SERVER"], env["OPENTRAIN_SERVER_PASSWORD"], env["OPENTRAIN_DIRECTORY"])
+            self.session = env["OPENTRAIN_SESSION"]
 
     def tools(self) -> list[dict[str, Any]]:
-        specs = self.client.get(f"/api/session/{self.session}/tools")
+        specs = self.client.get("/api/outside/tools" if self.outside else f"/api/session/{self.session}/tools")
         return [{"name": t["name"], "description": t["description"], "inputSchema": t["schema"]} for t in specs]
 
     def call(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         try:
-            r = self.client.request("POST", f"/api/session/{self.session}/tool-call",
+            path = "/api/outside/call" if self.outside else f"/api/session/{self.session}/tool-call"
+            r = self.client.request("POST", path,
                                     {"name": name, "input": args or {}, "call_id": f"mcp_{uuid.uuid4().hex[:16]}"},
                                     timeout=7 * 24 * 3600)
         except ClientError as exc:
@@ -50,7 +70,8 @@ class Bridge:
         try:
             if method == "initialize":
                 result: Any = {"protocolVersion": msg.get("params", {}).get("protocolVersion", PROTOCOL),
-                               "capabilities": {"tools": {}}, "serverInfo": {"name": "opentrain", "version": __version__}}
+                               "capabilities": {"tools": {}}, "serverInfo": {"name": "opentrain", "version": __version__},
+                               **({"instructions": INSTRUCTIONS} if self.outside else {})}
             elif method == "tools/list":
                 result = {"tools": self.tools()}
             elif method == "tools/call":

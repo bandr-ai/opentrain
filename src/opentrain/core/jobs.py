@@ -232,6 +232,12 @@ class Jobs:
             lines.append(summary)
         if j.get("cost_usd"):
             lines.append(f"Cost: ${j['cost_usd']:.2f}")
+        if (self.store.get("session", sid).get("metadata") or {}).get("outside"):
+            # an outside agent (opentrain mcp) waits with job_wait; record the result, wake no model
+            msg = self.store.create("message", {"session_id": sid, "role": "synthetic", "time": {"created": time.time()}})
+            self.store.create("part", {"session_id": sid, "message_id": msg["id"], "type": "text",
+                                       "text": "\n".join(lines), "time": {"created": time.time()}})
+            return
         try:
             self.project.services["runner"].prompt(sid, "\n".join(lines), delivery="queue", synthetic=True)
         except Exception as exc:  # the job result is recorded either way

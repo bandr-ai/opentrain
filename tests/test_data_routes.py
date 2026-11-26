@@ -142,3 +142,41 @@ def test_board_walks_the_loop(live):
     g = c.get("/api/board/grid", dataset="bd", reveal="1")
     r = g["rows"][0]
     assert r["prompt"].startswith("q") and r["reference"] == "done" and r["cells"]["scripted/bd-good"]["answer"]
+
+
+def test_an_outside_agent_gets_the_tools_and_the_rules(live):
+    """`opentrain mcp`: Claude Code calls OpenTrain's tools; held-out stays sealed, calls show in a session."""
+    c = live.client(live.proj)
+    names = {t["name"] for t in c.get("/api/outside/tools")}
+    assert {"datasets", "dataset_eval", "dataset_train", "dataset_recipe", "goal_set"} <= names
+    assert not names & {"shell", "edit", "write", "read", "propose", "question", "subagent"}, names & {"shell", "edit", "write", "read", "propose", "question", "subagent"}
+    content = "".join(json.dumps({"question": f"q{i}", "answer": "yes"}) + "\n" for i in range(30))
+    c.post("/api/dataset/oa/upload", {"filename": "oa.jsonl", "content": content})
+    r = c.post("/api/outside/call", {"name": "dataset_recipe", "input": {"name": "oa"}})
+    assert not r["is_error"] and "epochs" in r["output"]
+    r = c.post("/api/outside/call", {"name": "goal_set", "input": {"goal": "answer yes reliably"}})
+    assert not r["is_error"]
+    assert "answer yes reliably" in (live.proj / "Trainfile").read_text()
+    s = [s for s in c.get("/api/session") if (s.get("metadata") or {}).get("outside")]
+    assert len(s) == 1 and s[0]["agent"] == "outside"
+    parts = [p for m in c.get(f"/api/session/{s[0]['id']}/message") for p in m["parts"] if p["type"] == "tool"]
+    assert [p["tool"]["name"] for p in parts] == ["dataset_recipe", "goal_set"]
+    assert all(p["tool"]["state"] == "completed" for p in parts)
+
+
+def test_a_job_an_outside_agent_starts_wakes_no_model(live):
+    c = live.client(live.proj)
+    content = "".join(json.dumps({"question": f"q{i}", "answer": "done"}) + "\n" for i in range(30))
+    c.post("/api/dataset/ow/upload", {"filename": "ow.jsonl", "content": content})
+    ScriptedProvider.register("ow-good", [])
+    r = c.post("/api/outside/call", {"name": "dataset_eval", "input": {"name": "ow", "model": "scripted/ow-good"}})
+    assert "job_wait" in r["output"] and "system reminder" not in r["output"]
+    jid = r["output"].split("Started job ")[1].split(" ")[0]
+    w = c.post("/api/outside/call", {"name": "job_wait", "input": {"job_id": jid, "timeout": 30}})
+    assert '"state": "succeeded"' in w["output"]
+    sid = next(s["id"] for s in c.get("/api/session") if (s.get("metadata") or {}).get("outside"))
+    time.sleep(0.3)
+    msgs = c.get(f"/api/session/{sid}/message")
+    assert any(m["role"] == "synthetic" for m in msgs)
+    assert all(m["role"] != "assistant" or m.get("agent") == "outside" for m in msgs)
+    assert not any(p["type"] == "text" for m in msgs if m["role"] == "assistant" for p in m["parts"])
