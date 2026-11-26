@@ -104,3 +104,9 @@ def live(tmp_path, monkeypatch):
     srv.proj = proj
     yield srv
     srv.stop()
+
+
+@pytest.fixture(autouse=True)
+def _own_cookie_key(tmp_path, monkeypatch):
+    """No test writes the real user's browser sign-in key."""
+    monkeypatch.setenv("OPENTRAIN_COOKIE_KEY_FILE", str(tmp_path / "cookie.key"))

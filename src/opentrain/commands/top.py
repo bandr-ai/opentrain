@@ -184,7 +184,8 @@ def cmd_web(a: argparse.Namespace) -> int:
     directory = Path(a.dir).resolve()
     c = _client(directory, a.server, a.password)
     link = c.post("/api/pair")["url"] + "?next=" + urllib.parse.quote(f"/?directory={directory}")
-    print(f"OpenTrain dashboard: {link}\n(one-time link, valid for 5 minutes)")
+    base = link.split("/auth/", 1)[0]
+    print(f"OpenTrain: {link}\n(signs this browser in for 30 days; after that just open {base})")
     if not a.no_open:
         webbrowser.open(link)
     return 0

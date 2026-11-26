@@ -96,10 +96,32 @@ class Hub:
 # ---------------------------------------------------------------------- auth
 
 
+def cookie_key(password: str) -> bytes:
+    """The key browser cookies are signed with. Kept on disk (0600) so a browser stays signed in
+    across server restarts: the service password is new on every start, so a key derived from it
+    signed everyone out each time. Falls back to the password if the file cannot be written."""
+    import os
+    from pathlib import Path
+    from .service import state_home
+
+    path = Path(os.environ.get("OPENTRAIN_COOKIE_KEY_FILE") or state_home() / "cookie.key")
+    try:
+        if path.exists() and len(path.read_bytes()) >= 32:
+            return path.read_bytes()[:32]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        key = secrets.token_bytes(32)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(key)
+        return key
+    except OSError:
+        return hashlib.sha256(b"opentrain-cookie:" + password.encode()).digest()
+
+
 class Auth:
     def __init__(self, password: str):
         self.password = password
-        self.key = hashlib.sha256(b"opentrain-cookie:" + password.encode()).digest()
+        self.key = cookie_key(password)
         self.codes: dict[str, float] = {}
 
     def basic_ok(self, header: str | None) -> bool:

@@ -44,7 +44,7 @@ async def index(request: web.Request):
     html = built.read_text() if built.exists() else (STATIC / "index.html").read_text().replace(TOKEN_MARK, "cookie")
     resp = web.Response(text=html, content_type="text/html", headers={**SECURITY, "Cache-Control": "no-cache"})
     if request.query.get("directory"):
-        resp.set_cookie(DIR_COOKIE, request.query["directory"], httponly=True, samesite="Strict")
+        resp.set_cookie(DIR_COOKIE, request.query["directory"], max_age=30 * 24 * 3600, httponly=True, samesite="Strict")
     return resp
 
 
