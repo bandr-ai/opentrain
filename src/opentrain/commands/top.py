@@ -103,7 +103,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                 if t == "part.updated" and (d.get("tool") or {}).get("state") in ("completed", "error") and not a.json:
                     tool = parts[d["id"]].get("tool") or {}
                     mark = "✓" if tool["state"] == "completed" else "✗"
-                    print(f"\n  {mark} {tool.get('name', '')}  {tool.get('title') or ''}"
+                    print(f"\n  {mark} {tool.get('name', '')}  {tool.get('title') or _subject(tool.get('input'))}"
                           + (f"  {tool.get('error')}" if tool["state"] == "error" else ""), file=sys.stderr)
                 elif t == "permission.created" and d.get("status") == "pending":
                     _answer_permission(c, sid, d, interactive)
@@ -168,6 +168,18 @@ def cmd_run(a: argparse.Namespace) -> int:
         s = c.get(f"/api/session/{sid}")
         print(f"\n[{sid} · {s.get('agent')} · ${s.get('cost') or 0:.4f}]", file=sys.stderr)
     return 1 if (last and last.get("error") and last.get("finish") != "interrupted") else 0
+
+
+def _subject(inp: Any) -> str:
+    """What a tool call is about, when the tool gives no title: its dataset, model, query or id."""
+    if not isinstance(inp, dict):
+        return ""
+    for k in ("name", "model", "hf", "kaggle", "query", "path", "version", "job_id", "row_id"):
+        v = inp.get(k)
+        if isinstance(v, str) and v:
+            extra = f" ({inp['method']})" if k == "name" and isinstance(inp.get("method"), str) else ""
+            return v[:60] + extra
+    return ""
 
 
 def _active_jobs(c, sid: str) -> list[dict[str, Any]]:
