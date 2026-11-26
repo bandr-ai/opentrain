@@ -281,7 +281,9 @@ are in [docs/RECIPES.md](docs/RECIPES.md).
 | Mining tasks from Claude Code sessions | Runs on real logs; yield on real sessions is low (see docs/FINDINGS.md) |
 | Modal training and serving | **Run live**: Qwen2.5-0.5B on 54 rows, 28 steps on an L40S in 30 s for $0.02; held-out 42% → 100% (docs/RECIPES.md) |
 | Claude Code over MCP (`opentrain mcp`) | **Run live**: Claude Code evaluated, trained, waited and promoted through the tools |
-| Rejection sampling, on-policy distillation, RL on Modal | **Run live** on GSM8K with Qwen2.5-0.5B: each a few steps on an L40S for about $0.10 (smoke tests, not results) |
+| Rejection sampling, on-policy distillation, RL on Modal | **Run live** on GSM8K with Qwen2.5-0.5B: each a few steps on an L40S for about $0.10 (smoke tests, not results); RL with a `python` reward too |
+| The agent end to end, from a use case with no data | **Run live** (`opentrain run --yes`, $3 cap): found MedQA on Hugging Face, built the grader (and caught its own broken one), baselined Qwen3.5-4B on Modal, trained twice, refused to ship either; $0.32 (docs/RECIPES.md) |
+| Claude Code bringing its own data over MCP | **Run live**: turned a policy document into sealed eval rows and training rows (data/tasks), judged, baselined Haiku and Sonnet; $0 on the Claude login |
 | RunPod training and serving | Tested end to end against a fake RunPod API with the real agent and trainer; **no live pod run yet** |
 | Fireworks training (SFT, rejection, RL) | Tested against a fake SDK; **no live run yet** |
 | Dataset search (Hugging Face, Kaggle), Kaggle import | Search run live; Kaggle import tested against a recorded zip |
