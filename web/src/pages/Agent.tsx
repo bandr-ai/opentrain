@@ -46,7 +46,7 @@ export function fillComposer(text: string, submit = false) {
 
 // ------------------------------------------------------------------ the panel
 
-export function AgentPanel() {
+export function AgentPanel({ convo = true }: { convo?: boolean }) {
   const { sid, setSid, sessions, busy, jobs, reloadSessions } = useApp();
   const [session, setSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -143,17 +143,17 @@ export function AgentPanel() {
   const top = sessions.filter((s) => !s.parent_id);
 
   return (
-    <aside className="agent">
-      <div className="agent-head">
+    <aside className={`agent ${convo ? "" : "foot-only"}`}>
+      {convo && <div className="agent-head">
         <button className="agent-title" onClick={() => setPicking(!picking)} title="Switch conversation">
           <span className={`dot ${isBusy ? (state === "waiting" ? "waiting" : "busy") : ""}`} />
           <span className="t">{session?.title || (sid ? "…" : "new conversation")}</span>
           <Icon name="down" />
         </button>
         {isBusy && <button className="btn sm ghost" onClick={() => api.post(`/api/session/${sid}/interrupt`).catch(toastError)}>stop</button>}
-        <button className="btn sm ghost" title="New conversation" onClick={() => { setSid(null); setPicking(false); }}><Icon name="plus" /></button>
-      </div>
-      {picking && (
+        <button className="btn sm ghost" title="New conversation" onClick={() => { setSid(null); setPicking(false); }}>+ new</button>
+      </div>}
+      {convo && picking && (
         <div className="agent-sessions">
           {top.length === 0 && <div className="faint small" style={{ padding: "6px 10px" }}>no conversations yet</div>}
           {top.map((s) => (
@@ -165,7 +165,7 @@ export function AgentPanel() {
           ))}
         </div>
       )}
-      <div className="agent-scroll" ref={scroller} onScroll={(e) => {
+      {convo && <div className="agent-scroll" ref={scroller} onScroll={(e) => {
         const el = e.currentTarget;
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       }}>
@@ -177,7 +177,7 @@ export function AgentPanel() {
             <div className="row faint small"><span className="dot busy" /> thinking…</div>
           )}
         </div>
-      </div>
+      </div>}
       <div className="agent-foot">
         {proposals.map((p) => <ProposalCard key={p.id} p={p} onDone={loadAsks} />)}
         {perms.map((p) => <PermissionAsk key={p.id} p={p} onDone={loadAsks} />)}
@@ -189,11 +189,27 @@ export function AgentPanel() {
   );
 }
 
+const STARTERS: [string, string][] = [
+  ["find the cheapest model that does my job", "Compare a few models on my examples, including a small cheap one, and tell me which is good enough and what each costs: "],
+  ["fine-tune on a file of examples", "I have a file of examples (I'll drop it in). Measure a baseline, then fine-tune a small open model on it only if that's worth it."],
+  ["start from a Hugging Face dataset", "Use the Hugging Face dataset "],
+  ["build the data with me", "Help me build a dataset for this from scratch: "],
+];
+
 function AgentHello() {
   return (
     <div className="hello">
-      <p>Tell me what the model should get better at, in your own words. I'll find or build the data, decide how to grade answers, measure a baseline, train, and prove it on examples it never saw.</p>
-      <p className="faint">Anything that costs money or changes what's live comes to you as one step with its price. Nothing happens without your OK.</p>
+      <pre className="logo">{"opentrain"}</pre>
+      <p>Say what the model should get better at. The agent gets data, sets up grading, measures what you have, and trains only if it's worth it.</p>
+      <p className="faint">Anything that spends money or changes what's live waits for your OK.</p>
+      <div className="starters">
+        {STARTERS.map(([t, text], i) => (
+          <button key={t} className="starter" onClick={() => fillComposer(text)}>
+            <span className="faint">{i + 1}.</span> {t}
+          </button>
+        ))}
+      </div>
+      <p className="faint small">or drop a CSV / JSONL file anywhere on the page · 1–7 open a stage · esc back here</p>
     </div>
   );
 }
@@ -561,6 +577,7 @@ function Composer({ onSend, model, setModel, busy, placeholder, commands }: {
         </div>
       )}
       <div className="composer">
+        <span className="prompt-mark">&gt;</span>
         <textarea id="composer" ref={ta} value={text} rows={1} placeholder={placeholder}
           onChange={(e) => { setText(e.target.value); setPick(0); }} onKeyDown={onKey} />
         <div className="composer-bar">

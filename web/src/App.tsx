@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, Board, events, Job, ModelRow, Session, Status } from "./api";
-import { Icon, money, throttle, Toasts } from "./ui";
+import { money, throttle, Toasts } from "./ui";
 import { AgentPanel } from "./pages/Agent";
 import BoardPage, { DropZone, StageStrip } from "./pages/Board";
 import GridPage from "./pages/Grid";
@@ -71,7 +71,6 @@ export default function App() {
   const [sid, setSidState] = useState<string | null>(stored("ot.session"));
   const [connected, setConnected] = useState(true);
   const [authError, setAuthError] = useState(false);
-  const [agentOpen, setAgentOpen] = useState(true);
 
   const setSid = useCallback((s: string | null) => { setSidState(s); store("ot.session", s); }, []);
   const setDataset = useCallback((d: string) => { setDatasetState(d); store("ot.dataset", d); }, []);
@@ -79,7 +78,7 @@ export default function App() {
   useEffect(() => {
     const f = () => {
       const r = parse(window.location.hash);
-      if (r.page === "chat") { // a link to a conversation opens it beside the board
+      if (r.page === "chat") { // a link to a conversation opens it
         if (r.arg && r.arg !== "new") setSid(r.arg); else setSid(null);
         window.location.replace("#/");
         return;
@@ -102,6 +101,7 @@ export default function App() {
       if (e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable]")) return;
       const n = Number(e.key);
       if (n >= 1 && n <= STAGE_KEYS.length) go("s", STAGE_KEYS[n - 1]);
+      else if (e.key === "Escape" || e.key === "0") { if (document.querySelector(".modal")) return; go(""); }
       else if (e.key === "/" || e.key === "c") document.getElementById("composer")?.focus();
       else if (e.key === "g" && board?.dataset) go("grid", board.dataset);
       else return;
@@ -198,45 +198,41 @@ export default function App() {
 
   const running = jobs.filter((j) => j.state === "running");
   const b = board?.budget;
-  const stage = route.page === "s" ? route.arg : route.page === "" ? undefined : null;
-  const pendingStage = board?.proposals.find((p) => p.stage)?.stage;
-  const activeStage = (stage ?? pendingStage ?? board?.current ?? "goal") as any;
+  const onChat = route.page === "";
   const waiting = Object.values(busy).some((s) => s === "waiting");
 
-  let main: React.ReactNode;
-  if (route.page === "" || route.page === "s") main = <BoardPage stage={stage || undefined} />;
+  // The conversation is the app. Every other view opens above the prompt; Esc comes back.
+  let main: React.ReactNode = null;
+  if (route.page === "s") main = <BoardPage stage={route.arg || undefined} />;
   else if (route.page === "grid") main = <GridPage dataset={route.arg || board?.dataset || ""} />;
   else if (route.page === "evals" && route.arg) main = <EvalDetail id={route.arg} />;
   else if (route.page === "evals") main = <BoardPage stage="baseline" />;
   else if (route.page === "models") main = <BoardPage stage="ship" />;
   else if (route.page === "jobs") main = <Jobs id={route.arg} />;
   else if (route.page === "settings") main = <Settings />;
-  else main = <BoardPage />;
 
   return (
     <Ctx.Provider value={state}>
-      <div className={`app ${agentOpen ? "" : "agent-closed"}`}>
+      <div className="app">
         <header className="top">
           <a className="brand" href="#/">opentrain</a>
-          <span className="proj" title={board?.project.directory}>{board?.project.name || status?.project?.name || "…"}</span>
-          {board?.dataset && <span className="ds mono" title="the dataset the board shows">{board.dataset}</span>}
+          <span className="proj" title={board?.project.directory}>{board?.project.directory?.replace(/^\/Users\/[^/]+/, "~") || status?.project?.name || "…"}</span>
+          {board?.dataset && <span className="ds" title="the dataset in focus">{board.dataset}</span>}
           <span className="grow" />
-          {running.length > 0 && <a className="pill busy" href="#/jobs"><span className="dot busy" /> {running.length} running</a>}
-          {waiting && <span className="pill warn"><span className="dot waiting" /> needs you</span>}
-          {b && (
-            <span className="budget" title={`${b.text} · ${money(b.remaining_usd)} left`}>
-              <span className="bar"><i style={{ width: `${b.limit_usd ? Math.min(100, (b.spent_usd / b.limit_usd) * 100) : 0}%` }} /></span>
-              {money(b.spent_usd)} <span className="faint">/ {b.text}</span>
-            </span>
-          )}
+          {running.length > 0 && <a className="busy-t" href="#/jobs"><span className="dot busy" /> {running.length} running</a>}
+          {waiting && <span className="err"><span className="dot waiting" /> needs you</span>}
+          {b && <span className="budget" title={`${money(b.remaining_usd)} left`}>{money(b.spent_usd)} <span className="faint">/ {b.text}</span></span>}
           <span className={`conn ${connected ? "" : "off"}`} title={connected ? "connected" : "reconnecting…"}><i /></span>
-          <a className="icon-btn" href="#/settings" title="settings"><Icon name="settings" /></a>
-          <button className="icon-btn" title={agentOpen ? "hide the agent" : "show the agent"} onClick={() => setAgentOpen(!agentOpen)}><Icon name="chat" /></button>
         </header>
-        {board && <StageStrip board={board} active={route.page === "s" || route.page === "" ? activeStage : ("" as any)} />}
-        <div className="body">
-          <main className="main">{main}</main>
-          {agentOpen && <AgentPanel />}
+        {board && <StageStrip board={board} active={(route.page === "s" ? route.arg : "") as any} chat={onChat} />}
+        <div className={`body ${onChat ? "chat" : "view"}`}>
+          {!onChat && (
+            <main className="main">
+              <div className="back"><a href="#/">← chat</a> <span className="faint">esc</span></div>
+              {main}
+            </main>
+          )}
+          <AgentPanel convo={onChat} />
         </div>
       </div>
       <DropZone />

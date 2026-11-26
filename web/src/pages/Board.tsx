@@ -9,28 +9,34 @@ import { Playground, PromoteModal } from "./Models";
 
 // ------------------------------------------------------------------ the strip
 
-export function StageStrip({ board, active }: { board: BoardT; active: StageKey }) {
+// One line, like a terminal status bar: where the loop is, each stage a key away.
+export function StageStrip({ board, active, chat }: { board: BoardT; active: StageKey | ""; chat?: boolean }) {
   const asks = new Set(board.proposals.map((p) => p.stage).filter(Boolean));
+  const cur = board.stages.find((s) => s.current);
   return (
     <nav className="strip">
+      <a className={`st ${chat ? "on" : ""}`} href="#/" title="the conversation (esc)"><span className="n">0</span>chat</a>
+      <span className="sep">│</span>
       {board.stages.map((s, i) => (
         <button key={s.key} className={`st ${s.state} ${active === s.key ? "on" : ""} ${s.current ? "cur" : ""}`}
-          onClick={() => go("s", s.key)} title={s.summary}>
-          <span className="k">
-            <span className="n">{i + 1}</span> {s.label}
-            {asks.has(s.key) && <span className="dot waiting" title="a step waits for your OK" />}
-          </span>
-          <span className="v">{glyph(s)} {s.summary}</span>
+          onClick={() => go("s", s.key)} title={`${s.label}: ${s.summary}`}>
+          <span className="n">{i + 1}</span>{s.label.toLowerCase()}{glyph(s)}
+          {asks.has(s.key) && <span className="dot waiting" title="a step waits for your OK" />}
         </button>
       ))}
+      <span className="grow" />
+      {cur && <span className="st-now faint" title="where the loop is">{cur.summary}</span>}
+      <span className="sep">│</span>
+      <a className="st" href="#/jobs">jobs</a>
+      <a className="st" href="#/settings">settings</a>
     </nav>
   );
 }
 
 function glyph(s: Stage) {
-  if (s.state === "done") return <span className="ok">✓</span>;
-  if (s.state === "running") return <span className="dot busy" />;
-  return s.current ? <span className="cur-g">→</span> : <span className="faint">·</span>;
+  if (s.state === "done") return <span className="ok"> ✓</span>;
+  if (s.state === "running") return <> <span className="dot busy" /></>;
+  return s.current ? <span className="cur-g"> ←</span> : null;
 }
 
 // ------------------------------------------------------------------ the page
