@@ -110,6 +110,7 @@ class Policy:
         from transformers import AutoTokenizer
 
         self.spec, self.out_dir, self.log = spec, out_dir, log
+        self.stop = _stopper(None, log)
         self.s = settings(spec)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
@@ -280,8 +281,11 @@ def cosine(step: int, total: int, lr: float, warmup: float = 0.05) -> float:
 
 
 def run(spec: dict[str, Any], rows: list[dict[str, Any]], out_dir: str, emit: Callable[[dict], None],
-        grade: Callable[[str, str, str], float] | None = None) -> dict[str, Any]:
-    """Train; return a summary. ``grade(prompt_text, answer, reference) -> score in [0, 1]``."""
+        grade: Callable[[str, str, str], float] | None = None,
+        should_stop: Callable[[], bool] | None = None) -> dict[str, Any]:
+    """Train; return a summary. ``grade(prompt_text, answer, reference) -> score in [0, 1]``.
+    ``should_stop()`` is asked before each step: when it says yes (the budget ran out), training ends
+    there and the adapter as it stands is saved, so the steps already paid for are kept."""
     method = spec.get("method", "sft")
     if method not in METHODS:
         raise ValueError(f"unknown method {method!r}; one of {', '.join(METHODS)}")
@@ -294,6 +298,7 @@ def run(spec: dict[str, Any], rows: list[dict[str, Any]], out_dir: str, emit: Ca
         emit({"event": "log", "note": note, "seconds": round(time.time() - t0, 1)})
 
     pol = Policy(spec, out_dir, log)
+    pol.stop = _stopper(should_stop, log)
     pol.sync()
     items = []
     for r in rows:
@@ -304,7 +309,29 @@ def run(spec: dict[str, Any], rows: list[dict[str, Any]], out_dir: str, emit: Ca
     fn = {"sft": _sft, "rejection": _rejection, "opd": _opd, "rl": _rl}[method]
     summary = fn(pol, items, s, emit, grade, rng, t0)
     pol.save()
-    return {**summary, "seconds": round(time.time() - t0, 1)}
+    return {**summary, **({"stopped_early": True} if pol.stop.fired else {}), "seconds": round(time.time() - t0, 1)}
+
+
+def _stopper(should_stop: Callable[[], bool] | None, log: Callable[[str], None]):
+    """``stop()`` is True once ``should_stop`` says so (checked at most every 10 s; errors mean no)."""
+    state = {"at": 0.0}
+
+    def stop() -> bool:
+        if stop.fired:
+            return True
+        if should_stop is None or time.time() - state["at"] < 10:
+            return False
+        state["at"] = time.time()
+        try:
+            stop.fired = bool(should_stop())
+        except Exception:  # noqa: BLE001 - a lookup that fails is not a request to stop
+            return False
+        if stop.fired:
+            log("asked to stop early: saving the adapter as it stands")
+        return stop.fired
+
+    stop.fired = False
+    return stop
 
 
 def _emit_step(emit, t0, step, total, loss, **kw):
@@ -324,6 +351,8 @@ def _sft(pol, items, s, emit, grade, rng, t0):
     total, step = per * epochs, 0
     for _ in range(epochs):
         for b in _batches(items, bs, rng):
+            if pol.stop():
+                break
             pol.set_lr(cosine(step, total, lr))
             loss = pol.step([(x["p"], x["a"]) for x in b], [1.0] * len(b))
             step += 1
@@ -346,6 +375,8 @@ def _rejection(pol, items, s, emit, grade, rng, t0):
     step, history = 0, []
     est_total = rounds * math.ceil(len(items) * min(k, keep) / bs)
     for rnd in range(rounds):
+        if pol.stop():
+            break
         kept, solved, rewards = [], 0, []
         for chunk in [items[i:i + 64] for i in range(0, len(items), 64)]:
             groups = pol.sample([x["p"] for x in chunk], k, float(s["temperature"]), int(s["max_new_tokens"]))
@@ -385,6 +416,8 @@ def _rl(pol, items, s, emit, grade, rng, t0):
     pool: list = []
     rewards_seen = []
     for step in range(steps):
+        if pol.stop():
+            break
         if len(pool) < n:
             pool += _batches(items, len(items), rng)[0]
         batch, pool = pool[:n], pool[n:]
@@ -427,6 +460,8 @@ def _opd(pol, items, s, emit, grade, rng, t0):
     lr = float(pol.spec["learning_rate"])
     pool: list = []
     for step in range(steps):
+        if pol.stop():
+            break
         if len(pool) < n:
             pool += _batches(items, len(items), rng)[0]
         batch, pool = pool[:n], pool[n:]

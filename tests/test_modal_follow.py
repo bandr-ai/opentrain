@@ -72,3 +72,51 @@ def test_a_clean_run_stops_its_app(monkeypatch, tmp_path):
     store, job, stopped = _fake(monkeypatch, tmp_path, drop_after=None)
     modal_backend.run(store, job)
     assert store.load("j")["state"] == "succeeded" and stopped == ["ap-test"]
+
+
+def test_over_budget_a_job_ends_early_and_keeps_its_adapter(tmp_path, monkeypatch):
+    """Out of budget mid-run: first ask the job to stop at its next step (adapter kept); cancel only if
+    it runs on well past the limit."""
+    from opentrain import mcp, trainfile
+    from opentrain.backends import JobStatus
+
+    state = tmp_path / ".opentrain"
+    state.mkdir()
+    srv = mcp.Server(state, "trainer", None, trainfile.parse("trainer  modal\nbudget  $2 a week"))
+    calls = []
+    cost = {"usd": 1.3}
+
+    class B:
+        def status(self, jid):
+            return JobStatus(job_id=jid, state="running", progress=0.5, cost_usd=cost["usd"])
+
+        def stop_early(self, jid):
+            calls.append("stop")
+            return True
+
+        def cancel(self, jid):
+            calls.append("cancel")
+
+    monkeypatch.setattr(srv, "_job_event", lambda jid: {"backend": "modal", "estimate_usd": 1.0, "reservation": "r"})
+    monkeypatch.setattr("opentrain.backends.get_backend", lambda name, st: B())
+    monkeypatch.setattr(srv.ledger, "remaining", lambda run_id=None: 0.1)
+    out = srv.t_train_status("j")
+    assert calls == ["stop"] and "keeping the adapter" in out["stopping"]
+    srv.t_train_status("j")
+    assert calls == ["stop"]  # asked once; give it its next step
+    cost["usd"] = 1.3 * 1.25 + 0.5
+    out = srv.t_train_status("j")
+    assert calls == ["stop", "cancel"] and out["cancelled"] == "over budget"
+
+
+def test_the_trainer_stops_when_asked():
+    from opentrain.backends.gpu_train import _stopper
+
+    said, flag = [], {"v": False}
+    stop = _stopper(lambda: flag["v"], said.append)
+    assert not stop()
+    flag["v"] = True
+    assert not stop()  # checked at most every 10 s
+    stop_now = _stopper(lambda: True, said.append)
+    assert stop_now() and stop_now.fired and "saving the adapter" in said[0]
+    assert not _stopper(lambda: 1 / 0, said.append)()  # a failed lookup is not a stop

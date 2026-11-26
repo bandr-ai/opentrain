@@ -211,6 +211,10 @@ class ModalBackend:
     def cancel(self, job_id: str) -> None:
         self.store.request_cancel(job_id)
 
+    def stop_early(self, job_id: str) -> bool:
+        """End at the next step and keep the adapter (the budget ran out); False if it could not ask."""
+        return request_stop(job_id)
+
 
 def _rows(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
@@ -279,9 +283,10 @@ def run(store: JobStore, job: dict[str, Any]) -> None:
             store.log(jid, f"adapter saved on the opentrain volume: {ev['adapter']} ({ev['seconds']}s)")
             if ev.get("rounds"):
                 store.update(jid, rounds=ev["rounds"])
+            early = "stopped early (budget), adapter kept · " if ev.get("stopped_early") else ""
             store.update(jid, state="succeeded", progress=1.0, checkpoint=f"modal://{jid}", cost_usd=cost,
-                         adapter_rank=spec.lora_rank,
-                         detail=f"done in {round(ev['seconds'] / 60, 1)} min on {gpu} · ${cost:.2f}")
+                         adapter_rank=spec.lora_rank, stopped_early=bool(ev.get("stopped_early")),
+                         detail=f"{early}done in {round(ev['seconds'] / 60, 1)} min on {gpu} · ${cost:.2f}")
             return True
         return False
 
@@ -343,6 +348,17 @@ def _follow(store: JobStore, jid: str, st: dict[str, Any], handle, cancelled) ->
             stop_app(st["app"])
             raise ModalError(f"no news from the Modal job for {FOLLOW_SILENCE // 3600} hours; stopped it")
         time.sleep(wait)
+
+
+def request_stop(job_id: str) -> bool:
+    """Ask a running Modal job to end at its next step and save its adapter (see ``EventLog``)."""
+    import modal
+
+    try:
+        modal.Dict.from_name("opentrain-events", create_if_missing=True)[f"{job_id}/stop"] = True
+        return True
+    except Exception:  # noqa: BLE001 - offline: the caller falls back to cancelling
+        return False
 
 
 def stop_app(app_id: str | None) -> None:

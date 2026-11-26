@@ -21,6 +21,7 @@ import argparse
 import dataclasses
 import json
 import sys
+import time
 import traceback
 from dataclasses import asdict
 from pathlib import Path
@@ -214,9 +215,17 @@ class Server:
         out: dict[str, Any] = {"state": st.state, "progress": st.progress, "cost_usd": st.cost_usd,
                                "detail": st.detail, "logs": st.logs[-10:], "loss": st.loss,
                                "reward": st.reward}
-        if not st.done and st.cost_usd > launched["estimate_usd"] + self.ledger.remaining(self.run.run_id):
-            get_backend(launched["backend"], self.state).cancel(job_id)
-            out["cancelled"] = "over budget"
+        limit = launched["estimate_usd"] + self.ledger.remaining(self.run.run_id)
+        if not st.done and st.cost_usd > limit:
+            backend = get_backend(launched["backend"], self.state)
+            asked = self._stop_asked(job_id)
+            # first ask the job to end at its next step and keep its adapter; cancel only if it runs on
+            if asked is None and hasattr(backend, "stop_early") and backend.stop_early(job_id):
+                self._stop_asked(job_id, time.time())
+                out["stopping"] = "over budget: ending at the next step, keeping the adapter trained so far"
+            elif asked is None or time.time() - asked > 900 or st.cost_usd > limit * 1.25 + 0.25:
+                backend.cancel(job_id)
+                out["cancelled"] = "over budget"
         if st.done and not any(e["kind"] == "job" and e["data"].get("job_id") == job_id
                                and e["data"].get("state") in ("succeeded", "failed", "cancelled")
                                for e in self.run.events()):
@@ -231,6 +240,18 @@ class Server:
                 self.run.add("checkpoint", version=v.version, checkpoint=st.checkpoint)
                 out["version"] = v.version
         return out
+
+    def _stop_asked(self, job_id: str, at: float | None = None) -> float | None:
+        """When this job was asked to stop early (kept beside the job's own record)."""
+        p = self.state / "jobs" / f"{job_id}.stop"
+        if at is not None:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(str(at))
+            return at
+        try:
+            return float(p.read_text())
+        except (OSError, ValueError):
+            return None
 
     def t_train_cancel(self, job_id: str) -> Any:
         from .backends import get_backend

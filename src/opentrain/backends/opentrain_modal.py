@@ -71,6 +71,10 @@ class EventLog:
         self.n += 1
         return ev
 
+    def stop_requested(self) -> bool:
+        """OpenTrain asks a job to end early (its budget ran out) by setting ``<job>/stop``."""
+        return bool(self.d.get(f"{self.job_id}/stop", False))
+
 
 def slug(base: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")[:40]
@@ -123,6 +127,16 @@ if MODE == "train":
                                   target_modules="all-linear", task_type="CAUSAL_LM")
 
                 class Report(TrainerCallback):
+                    checked = [0.0]
+
+                    def on_step_end(self, args, state, control, **kw):
+                        # asked to end early (the budget ran out): stop here and save what was trained
+                        if time.time() - self.checked[0] > 10:
+                            self.checked[0] = time.time()
+                            if keep.stop_requested():
+                                control.should_training_stop = True
+                                events.put({"event": "log", "note": "asked to stop early: saving the adapter"})
+
                     def on_log(self, args, state, control, logs=None, **kw):
                         logs = logs or {}
                         if "loss" in logs:
@@ -181,7 +195,8 @@ if MODE == "train":
             try:
                 out = f"{ADAPTERS}/{job_id}"
                 summary = gpu_train.run(spec, rows, out, events.put,
-                                        gpu_train.grader_fn((spec.get("extra") or {}).get("grader")))
+                                        gpu_train.grader_fn((spec.get("extra") or {}).get("grader")),
+                                        should_stop=keep.stop_requested)
                 vol.commit()
                 events.put({"event": "done", "adapter": out, **summary, "seconds": round(time.time() - t0, 1)})
             except Exception as e:  # noqa: BLE001 - the caller records it
