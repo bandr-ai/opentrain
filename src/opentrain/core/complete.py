@@ -123,7 +123,10 @@ def _hosted(host: str, base: str, messages, max_tokens, timeout, t0) -> Completi
     return _openai(ep, f"{host}/{base}", messages, max_tokens, timeout, t0, host=(host, base))
 
 
-THINK = re.compile(r"^\s*(?:<think>)?.*?</think>\s*", re.S)  # the opening tag may be in the prompt (Qwen3.5)
+THINK = re.compile(r"^\s*<think>.*?</think>\s*", re.S)
+THINK_OPEN = re.compile(r"^\s*(?:<think>)?.*?</think>\s*", re.S)
+"""Open models we serve (Qwen3/3.5) may get ``<think>`` from their chat template, so their text starts
+inside the reasoning; only for them is a lone closing tag the end of it."""
 
 
 def _openai(ep, label: str, messages, max_tokens, timeout, t0, host: tuple[str, str] | None = None) -> Completion:
@@ -157,7 +160,7 @@ def _openai(ep, label: str, messages, max_tokens, timeout, t0, host: tuple[str, 
         raise CompletionError(f"{label} did not answer: {exc}") from None
     u = out.get("usage") or {}
     text = (out.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-    return Completion(text=THINK.sub("", text), seconds=time.time() - t0, cost=cost_of or 0.0,
+    return Completion(text=(THINK_OPEN if host else THINK).sub("", text), seconds=time.time() - t0, cost=cost_of or 0.0,
                       input_tokens=u.get("prompt_tokens", 0) or 0, output_tokens=u.get("completion_tokens", 0) or 0,
                       billing=f"{host[0]}-gpu" if host else "api")
 
@@ -165,19 +168,28 @@ def _openai(ep, label: str, messages, max_tokens, timeout, t0, host: tuple[str, 
 ROLLOUT_SECONDS = 240
 
 
+_rollout_until: dict[str, float] = {}  # endpoint -> when its current rollout window ends
+
+
 def _rollout_safe(req, timeout: float) -> dict:
     """POST to an endpoint on the user's GPU account. While a new adapter rolls out, a request can
     reach a container that does not have it yet (404) or one that is starting (502/503): wait and
-    retry instead of scoring that row as a wrong answer."""
+    retry instead of scoring that row as a wrong answer. The window is shared by every request to
+    the endpoint, so an endpoint that is simply wrong fails every row within minutes, not each."""
     import urllib.error
 
-    end = time.time() + ROLLOUT_SECONDS
+    key = getattr(req, "full_url", "") or str(id(req))
     while True:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
-                return json.loads(r.read().decode())
+                out = json.loads(r.read().decode())
+            _rollout_until.pop(key, None)
+            return out
         except urllib.error.HTTPError as exc:
-            if exc.code not in (404, 502, 503) or time.time() > end:
+            if exc.code not in (404, 502, 503):
+                raise
+            end = _rollout_until.setdefault(key, time.time() + ROLLOUT_SECONDS)
+            if time.time() > end:
                 raise
             time.sleep(10)
 

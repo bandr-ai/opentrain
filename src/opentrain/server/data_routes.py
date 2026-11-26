@@ -122,7 +122,9 @@ async def patch_dataset(request: web.Request):
     b = await body_of(request)
     ds, name = _datasets(request), request.match_info["name"]
     if b.get("grader") is not None:
-        await _run(check, b["grader"])
+        b["grader"] = {k: v for k, v in b["grader"].items() if k != "source"} if isinstance(b["grader"], dict) \
+            else b["grader"]
+        await _run(check, b["grader"], project_of(request).directory)
     await _run(ds.update_meta, name, description=b.get("description"), system=b.get("system"), grader=b.get("grader"))
     for rid, answer in (b.get("label") or {}).items():
         await _run(ds.label, name, rid, answer)

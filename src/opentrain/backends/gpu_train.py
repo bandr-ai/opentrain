@@ -31,6 +31,7 @@ import json
 import math
 import os
 import random
+import sys
 import tempfile
 import time
 from typing import Any, Callable
@@ -451,8 +452,12 @@ def _opd(pol, items, s, emit, grade, rng, t0):
 # ---------------------------------------------------------------------------- a command line, for pods
 
 
-def grader_fn(grader: dict[str, Any] | None):
-    """The dataset's grader as ``(prompt, answer, reference) -> score``, if it runs here."""
+def grader_fn(grader: dict[str, Any] | None, *, inprocess: bool = True):
+    """The dataset's grader as ``(prompt, answer, reference) -> score``, if it runs here.
+
+    A python reward runs in this process on a remote GPU (``inprocess``); on the user's own machine
+    (the Fireworks loop) it runs in a sandboxed child process, as in evals, so it cannot reach the
+    sealed rows. A reward that raises scores 0 for that sample instead of killing a paid job."""
     if not grader or grader.get("type") in ("judge", "command"):
         return None
     try:
@@ -461,10 +466,24 @@ def grader_fn(grader: dict[str, Any] | None):
     except ImportError:
         from opentrain.graders import grade as g
         from opentrain.graders import load_reward
-    if grader.get("type") == "python":  # the user's environment: in process, its source came with the job
+    if grader.get("type") == "python" and inprocess:
         fn = load_reward(grader["source"], grader.get("function", "reward"))
-        return lambda prompt, answer, ref: fn(prompt, answer, ref)[0]
-    return lambda prompt, answer, ref: g(grader, prompt, answer, ref).score
+        score = lambda prompt, answer, ref: fn(prompt, answer, ref)[0]  # noqa: E731
+    else:
+        score = lambda prompt, answer, ref: g(grader, prompt, answer, ref).score  # noqa: E731
+    failures = [0]
+
+    def safe(prompt: str, answer: str, ref: str | None) -> float:
+        try:
+            return score(prompt, answer, ref)
+        except Exception as exc:  # noqa: BLE001 - the user's reward; one bad sample is not the run
+            failures[0] += 1
+            if failures[0] in (1, 10, 100):
+                print(f"opentrain: the grader failed {failures[0]} time(s), scored 0: {type(exc).__name__}: {exc}",
+                      file=sys.stderr, flush=True)
+            return 0.0
+
+    return safe
 
 
 def main(argv: list[str]) -> int:

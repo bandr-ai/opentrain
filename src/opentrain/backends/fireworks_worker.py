@@ -113,7 +113,7 @@ def run_loop(store: JobStore, job: dict[str, Any]) -> None:
     jid = job["job_id"]
     spec = spec_from_dict(job["spec"])
     s = settings({"method": spec.method, "extra": spec.extra})
-    grade = grader_fn(spec.extra.get("grader"))
+    grade = grader_fn(spec.extra.get("grader"), inprocess=False)  # runs here, beside the sealed rows: sandboxed
     if grade is None:
         raise RuntimeError(f"{spec.method} needs a grader that runs in the loop (exact, contains, regex, json, number, python)")
     train_price, sample_price = float(job["usd_per_mtok"]), float(job.get("usd_per_mtok_sample") or 0)

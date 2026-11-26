@@ -230,6 +230,9 @@ def prompt_completion(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+FOLLOW_SILENCE = 3 * 3600  # following by polling: give up after this long with no new event
+
+
 def run(store: JobStore, job: dict[str, Any]) -> None:
     import modal
 
@@ -242,50 +245,114 @@ def run(store: JobStore, job: dict[str, Any]) -> None:
                    f"GPU {' or '.join(gpus)}")
     mod = load_app(OT_MODAL_MODE="train", OT_TRAIN_GPU=json.dumps(gpus), OT_LOOP_GPU=json.dumps(gpus))
     fn = mod.train if spec.method == "sft" else mod.train_loop
-    gpu = gpus[0]
-    per_s = rate(gpus)
-    curve: list[list[float]] = []
-    started = None
-    with modal.enable_output(), mod.app.run():
-        for ev in fn.remote_gen(jid, spec_to_dict(spec), rows):
-            now = time.time()
-            if ev["event"] == "started":
-                started = now
-                gpu = device_gpu(ev["gpu"]) or gpu
-                per_s = rate(gpu)
-                store.log(jid, f"container up on {ev['gpu']}: {ev['versions']}")
-                store.update(jid, detail=f"loading {spec.base_model} on {ev['gpu']}")
-            cost = round((now - started) * per_s, 4) if started else 0.0
-            if ev["event"] == "step":
-                total = ev["total"] or 1
-                curve.append([round(ev["step"] / total, 4), ev["loss"]])
-                extra = {k: ev[k] for k in ("reward", "kl") if k in ev}
-                shown = (f" · reward {ev['reward']:.0%}" if "reward" in ev else "") + (
-                    f" · kl {ev['kl']:.3f}" if "kl" in ev else "")
-                store.update(jid, progress=round(ev["step"] / total, 4), loss=ev["loss"], cost_usd=cost,
-                             detail=f"step {ev['step']}/{total} · loss {ev['loss']:.3f}{shown} · {gpu}", **extra)
-                store.log(jid, f"step {ev['step']}/{total} loss {ev['loss']:.4f}"
-                               + "".join(f" {k}={v}" for k, v in extra.items()) + (f" ({ev['note']})" if ev.get("note") else ""))
-            elif ev["event"] == "log":
-                store.log(jid, ev["note"])
-                store.update(jid, detail=f"{ev['note']} · {gpu}", cost_usd=cost)
-            elif ev["event"] == "error":
-                if ev.get("trace"):
-                    store.log(jid, ev["trace"])
-                raise ModalError(ev["error"])
-            elif ev["event"] == "done":
-                store.log(jid, f"adapter saved on the opentrain volume: {ev['adapter']} ({ev['seconds']}s)")
-                if ev.get("rounds"):
-                    store.update(jid, rounds=ev["rounds"])
-                store.update(jid, state="succeeded", progress=1.0, checkpoint=f"modal://{jid}", cost_usd=cost,
-                             adapter_rank=spec.lora_rank,
-                             detail=f"done in {round(ev['seconds'] / 60, 1)} min on {gpu} · ${cost:.2f}")
-                return
-            if store.cancel_requested(jid):
-                store.log(jid, "cancelled; stopping the Modal app")
-                store.update(jid, state="cancelled", cost_usd=cost, detail="cancelled; no adapter saved")
-                return
-    raise ModalError("the Modal app ended without saving an adapter")
+    st: dict[str, Any] = {"gpu": gpus[0], "per_s": rate(gpus), "started": None, "seen": 0, "app": None}
+
+    def handle(ev: dict[str, Any]) -> bool:
+        """Record one event; True when the job is over (done). An error event raises."""
+        st["seen"] += 1
+        now = time.time()
+        if ev["event"] == "started":
+            st["started"] = now
+            st["gpu"] = device_gpu(ev["gpu"]) or st["gpu"]
+            st["per_s"] = rate(st["gpu"])
+            store.log(jid, f"container up on {ev['gpu']}: {ev['versions']}")
+            store.update(jid, detail=f"loading {spec.base_model} on {ev['gpu']}")
+        cost = round((now - st["started"]) * st["per_s"], 4) if st["started"] else 0.0
+        gpu = st["gpu"]
+        if ev["event"] == "step":
+            total = ev["total"] or 1
+            extra = {k: ev[k] for k in ("reward", "kl") if k in ev}
+            shown = (f" · reward {ev['reward']:.0%}" if "reward" in ev else "") + (
+                f" · kl {ev['kl']:.3f}" if "kl" in ev else "")
+            store.update(jid, progress=round(ev["step"] / total, 4), loss=ev["loss"], cost_usd=cost,
+                         detail=f"step {ev['step']}/{total} · loss {ev['loss']:.3f}{shown} · {gpu}", **extra)
+            store.log(jid, f"step {ev['step']}/{total} loss {ev['loss']:.4f}"
+                           + "".join(f" {k}={v}" for k, v in extra.items()) + (f" ({ev['note']})" if ev.get("note") else ""))
+        elif ev["event"] == "log":
+            store.log(jid, ev["note"])
+            store.update(jid, detail=f"{ev['note']} · {gpu}", cost_usd=cost)
+        elif ev["event"] == "error":
+            if ev.get("trace"):
+                store.log(jid, ev["trace"])
+            raise ModalError(ev["error"])
+        elif ev["event"] == "done":
+            store.log(jid, f"adapter saved on the opentrain volume: {ev['adapter']} ({ev['seconds']}s)")
+            if ev.get("rounds"):
+                store.update(jid, rounds=ev["rounds"])
+            store.update(jid, state="succeeded", progress=1.0, checkpoint=f"modal://{jid}", cost_usd=cost,
+                         adapter_rank=spec.lora_rank,
+                         detail=f"done in {round(ev['seconds'] / 60, 1)} min on {gpu} · ${cost:.2f}")
+            return True
+        return False
+
+    def cancelled() -> bool:
+        if not store.cancel_requested(jid):
+            return False
+        store.log(jid, "cancelled; stopping the Modal app")
+        stop_app(st["app"])
+        cost = round((time.time() - st["started"]) * st["per_s"], 4) if st["started"] else 0.0
+        store.update(jid, state="cancelled", cost_usd=cost, detail="cancelled; no adapter saved")
+        return True
+
+    try:
+        with modal.enable_output(), mod.app.run(detach=True):
+            st["app"] = mod.app.app_id
+            store.update(jid, modal_app=st["app"])
+            for ev in fn.remote_gen(jid, spec_to_dict(spec), rows):
+                if handle(ev) or cancelled():
+                    break
+            else:
+                raise ModalError("the Modal app ended without saving an adapter")
+        stop_app(st["app"])
+        return
+    except ModalError:
+        stop_app(st["app"])
+        raise
+    except Exception as exc:  # noqa: BLE001 - a dropped connection; the detached job goes on
+        if not st["app"]:
+            raise
+        store.log(jid, f"lost the stream from Modal ({type(exc).__name__}: {exc}); the job keeps running "
+                       "there, following its event log instead")
+    _follow(store, jid, st, handle, cancelled)
+
+
+def _follow(store: JobStore, jid: str, st: dict[str, Any], handle, cancelled) -> None:
+    """Poll the job's events from the Modal Dict until it ends, riding out network errors."""
+    import modal
+
+    d = modal.Dict.from_name("opentrain-events", create_if_missing=True)
+    last_new, wait = time.time(), 10
+    while True:
+        try:
+            n = d.get(f"{jid}/n", 0)
+            while st["seen"] < n:
+                if handle(d[f"{jid}/{st['seen']}"]):
+                    stop_app(st["app"])
+                    return
+                last_new = time.time()
+            wait = 10
+        except ModalError:
+            stop_app(st["app"])
+            raise
+        except Exception as exc:  # noqa: BLE001 - still offline: back off and try again
+            store.update(jid, detail=f"reconnecting to Modal ({type(exc).__name__})")
+            wait = min(wait * 2, 120)
+        if cancelled():
+            return
+        if time.time() - last_new > FOLLOW_SILENCE:
+            stop_app(st["app"])
+            raise ModalError(f"no news from the Modal job for {FOLLOW_SILENCE // 3600} hours; stopped it")
+        time.sleep(wait)
+
+
+def stop_app(app_id: str | None) -> None:
+    """Stop a detached training app (it stops by itself when its call ends; this makes sure)."""
+    if not app_id:
+        return
+    try:
+        subprocess.run([sys.executable, "-m", "modal", "app", "stop", app_id], capture_output=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 # ------------------------------------------------------------------ serving

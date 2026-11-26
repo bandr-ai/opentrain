@@ -147,10 +147,15 @@ def cmd_run(a: argparse.Namespace) -> int:
             c.post(f"/api/session/{sid}/prompt", {"text": text})
         while not done.wait(1.0):
             since, now = follow["idle_since"], time.time()
+            if since and now - since > FOLLOW_MAX:
+                print("\n  stopped following after 24 hours; the job keeps running on the server", file=sys.stderr)
+                break
             if since and now - since > 30 and now - follow.get("checked", 0) > 15:
                 follow["checked"] = now
-                if not _active_jobs(c, sid) and c.get(f"/api/session/{sid}").get("status") == "idle":
-                    break  # the jobs ended and nothing woke the agent
+                quiet = not _active_jobs(c, sid) and c.get(f"/api/session/{sid}").get("status") == "idle"
+                follow["quiet"] = follow.get("quiet", 0) + 1 if quiet else 0
+                if follow["quiet"] >= 2:  # twice in a row: the jobs ended and nothing woke the agent
+                    break
             if not th.is_alive():
                 c.post(f"/api/session/{sid}/wait", {"timeout": 24 * 3600})
                 break
@@ -168,6 +173,9 @@ def cmd_run(a: argparse.Namespace) -> int:
         s = c.get(f"/api/session/{sid}")
         print(f"\n[{sid} · {s.get('agent')} · ${s.get('cost') or 0:.4f}]", file=sys.stderr)
     return 1 if (last and last.get("error") and last.get("finish") != "interrupted") else 0
+
+
+FOLLOW_MAX = 24 * 3600
 
 
 def _subject(inp: Any) -> str:

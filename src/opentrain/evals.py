@@ -141,11 +141,22 @@ def list_evals(state: Path, dataset: str | None = None, target: str | None = Non
 def latest(state: Path, dataset: str, target: str) -> dict[str, Any] | None:
     """The held-out eval that speaks for ``target``: the newest of those covering the most rows, so a
     quick eval on a few rows never replaces a full one at the gate."""
-    held = [e for e in list_evals(state, dataset, target) if e["split"] == "heldout"]
+    try:
+        grader = Datasets(state).meta(dataset).get("grader") or {"type": "judge"}
+    except DatasetError:
+        grader = None
+    recs = [get(state, e["id"]) for e in list_evals(state, dataset, target) if e["split"] == "heldout"]
+    # only evals graded the way the dataset grades now: a changed grader makes older scores incomparable
+    held = [r for r in recs if grader is None or _same_grader(r.get("grader"), grader)]
     if not held:
         return None
-    most = max(e["summary"]["rows"] for e in held)
-    return get(state, next(e["id"] for e in held if e["summary"]["rows"] == most))
+    most = max(r["summary"]["rows"] for r in held)
+    return next(r for r in held if r["summary"]["rows"] == most)
+
+
+def _same_grader(a: dict[str, Any] | None, b: dict[str, Any]) -> bool:
+    strip = lambda g: {k: v for k, v in (g or {"type": "judge"}).items() if k != "source"}  # noqa: E731
+    return strip(a) == strip(b)
 
 
 def contamination(state: Path, dataset: str, training_file: Path) -> list[dict[str, Any]]:
@@ -174,9 +185,11 @@ def decide(state: Path, dataset: str, candidate: str, baseline: str, *, allow_re
     cand, base = latest(state, dataset, candidate), latest(state, dataset, baseline)
     reasons: list[str] = []
     if cand is None:
-        return {"promote": False, "reasons": [f"{candidate} has no held-out eval on {dataset} yet"]}
+        return {"promote": False, "reasons": [f"{candidate} has no held-out eval on {dataset} under its current "
+                                              "grader yet"]}
     if base is None:
-        return {"promote": False, "reasons": [f"the baseline {baseline} has no held-out eval on {dataset} yet"]}
+        return {"promote": False, "reasons": [f"the baseline {baseline} has no held-out eval on {dataset} under its "
+                                              "current grader yet (re-evaluate it after a grader change)"]}
     c_rows = {r["id"]: r for r in cand["rows"]}
     b_rows = {r["id"]: r for r in base["rows"]}
     common = sorted(set(c_rows) & set(b_rows))

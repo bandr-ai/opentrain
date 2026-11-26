@@ -112,6 +112,8 @@ async def dataset_import(ctx: ToolContext, name: str, path: str | None = None, h
         from .paths import guard
 
         guard(ctx.project, p)
+        if ctx.agent.name != "outside":  # an outside agent reads files under its own permissions
+            await ctx.ask("read", [str(p)], metadata={"path": str(p)})  # the user's read rules (.env, keys)
         raws = await asyncio.to_thread(_err(read_file), p)
         source = {"file": str(p)}
     elif kaggle:
@@ -156,9 +158,9 @@ def suggest_grader(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
 
     refs = [x for x in (reference_of(r) for r in rows[:200]) if x]
     if len(refs) >= 5 and all(re.fullmatch(r"\s*\(?[A-Ja-j][).:]?\s*", x) for x in refs):
-        return {"type": "regex", "pattern": r"^\W*([A-J])\b",
-                "why": "every reference is an option letter: the first letter of the answer must match it (ask "
-                       "for the letter only in the system prompt)"}
+        return {"type": "regex", "pattern": r"\b(?P<answer>[A-H])\b(?!.*\b[A-H]\b)", "ignore_case": False,
+                "why": "every reference is an option letter: the last capital option letter in the answer must "
+                       "match it (ask for the letter only in the system prompt)"}
     if len(refs) >= 5 and sum(_last_number(x) is not None for x in refs) >= 0.95 * len(refs):
         tail = sum(bool(re.search(r"(####|\\boxed\{|answer is)\s*-?[\d$]", x, re.I)) for x in refs)
         if tail >= 0.8 * len(refs) or max(map(len, refs)) <= 20:
@@ -184,7 +186,8 @@ def dataset_edit(ctx: ToolContext, name: str, description: str | None = None, sy
     ds = _ds(ctx)
     out: dict[str, Any] = {}
     if grader is not None:
-        _err(check)(grader)
+        grader = {k: v for k, v in grader.items() if k != "source"}  # a python grader's code lives in its file
+        _err(check)(grader, ctx.project.directory)
         _err(ds.update_meta)(name, grader=grader)
         out["grader"] = describe(grader)
     if description is not None or system is not None:
@@ -437,6 +440,8 @@ def dataset_recipe(ctx: ToolContext, name: str, method: str | None = None, epoch
                    settings: dict[str, Any] | None = None) -> Any:
     """The recipe, with any overrides you plan to pass to dataset_train applied, priced as it would run."""
     r = recipe_for(ctx, name, method)
+    if isinstance((r.get("extra") or {}).get("grader"), dict):  # the reward's code is sent with the job, not shown
+        r = {**r, "extra": {**r["extra"], "grader": {k: v for k, v in r["extra"]["grader"].items() if k != "source"}}}
     over = {k: v for k, v in (("epochs", epochs), ("lora_rank", lora_rank), ("learning_rate", learning_rate))
             if v is not None}
     if over or settings:

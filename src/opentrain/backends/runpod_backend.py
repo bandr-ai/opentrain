@@ -336,7 +336,10 @@ def run(store: JobStore, job: dict[str, Any]) -> None:
             try:
                 got = _agent(pod["url"], "GET", f"/events?after={n}", timeout=30)
             except Exception as e:  # noqa: BLE001 - a proxy hiccup; the pod's status decides
-                code, info = _api("GET", f"/pods/{pod['id']}")
+                try:
+                    code, info = _api("GET", f"/pods/{pod['id']}")
+                except Exception:  # noqa: BLE001 - this machine is offline too: the pod trains on; wait
+                    code, info = 0, {}
                 if code == 404 or (info or {}).get("status") in ("TERMINATED", "ERROR", "EXITED"):
                     raise RunPodError(f"pod {pod['id']} stopped during training") from None
                 log(f"no events ({str(e)[:80]}); retrying")

@@ -8,7 +8,8 @@ for serving, bakes into the image so the container defines the same function):
 * training (the default mode): ``OT_TRAIN_GPU`` picks the GPU. ``train`` is a generator: it yields
   ``started``, then one ``step`` event per logged step (with the loss), then ``done`` with the
   adapter's path on the ``opentrain`` volume, or ``error``. The caller runs it inside
-  ``app.run()``, so the app stops when the caller does (no orphaned GPU).
+  ``app.run(detach=True)`` and stops the app when it is done or cancelled; if the caller loses its
+  connection, the job goes on and the caller follows it through ``EventLog``.
 * serving (``OT_MODAL_MODE=serve``): one app per base model, ``opentrain-serve-<base>``, serving
   the base model as ``base`` and every adapter in ``OT_SERVE_ADAPTERS`` (``{name: rank}``) under its
   name, behind ``--api-key`` (the key comes in a secret). It scales to zero after
@@ -50,6 +51,27 @@ def gpus(env: str, default: str):
     return json.loads(v) if v.startswith("[") else v
 
 
+EVENTS = "opentrain-events"
+
+
+class EventLog:
+    """Every event a training function yields is also kept in a Modal Dict, so a client that lost its
+    connection (a laptop's network blip) can follow the job again by polling: the app runs detached."""
+
+    def __init__(self, job_id: str):
+        self.job_id, self.n = job_id, 0
+        self.d = modal.Dict.from_name(EVENTS, create_if_missing=True)
+
+    def __call__(self, ev: dict) -> dict:
+        try:
+            self.d[f"{self.job_id}/{self.n}"] = ev
+            self.d[f"{self.job_id}/n"] = self.n + 1
+        except Exception:  # noqa: BLE001 - the stream to a connected client still carries it
+            pass
+        self.n += 1
+        return ev
+
+
 def slug(base: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")[:40]
 
@@ -74,10 +96,11 @@ if MODE == "train":
 
         events: queue.Queue = queue.Queue()
         t0 = time.time()
+        keep = EventLog(job_id)
         import torch
 
-        yield {"event": "started", "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
-               "versions": {p: pkg_version(p) for p in ("torch", "transformers", "peft", "trl")}}
+        yield keep({"event": "started", "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
+                    "versions": {p: pkg_version(p) for p in ("torch", "transformers", "peft", "trl")}})
 
         def work() -> None:
             try:
@@ -119,7 +142,7 @@ if MODE == "train":
         threading.Thread(target=work, daemon=True).start()
         while True:
             ev = events.get()
-            yield ev
+            yield keep(ev)
             if ev["event"] in ("done", "error"):
                 return
 
@@ -150,8 +173,9 @@ if MODE == "train":
 
         events: queue.Queue = queue.Queue()
         t0 = time.time()
-        yield {"event": "started", "gpu": torch.cuda.get_device_name(0),
-               "versions": {p: pkg_version(p) for p in ("torch", "transformers", "peft", "vllm")}}
+        keep = EventLog(job_id)
+        yield keep({"event": "started", "gpu": torch.cuda.get_device_name(0),
+                    "versions": {p: pkg_version(p) for p in ("torch", "transformers", "peft", "vllm")}})
 
         def work() -> None:
             try:
@@ -169,7 +193,7 @@ if MODE == "train":
         threading.Thread(target=work, daemon=True).start()
         while True:
             ev = events.get()
-            yield ev
+            yield keep(ev)
             if ev["event"] in ("done", "error"):
                 return
 

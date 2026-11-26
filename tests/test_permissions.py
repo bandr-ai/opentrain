@@ -182,3 +182,10 @@ def test_unattended_questions_never_wait(live):
         {"question": "Which?", "options": ["a", "b"]}]}}], ["done"]], metadata={"unattended": True})
     t = _tools(c, s["id"])[0]
     assert t["state"] == "error" and "nobody can answer" in t["error"]
+
+
+def test_an_unattended_free_step_goes_ahead(live):
+    c, s = _start(live, "p9", [[{"tool": "propose", "input": {"title": "Look at the data", "needs": []}}], ["done"]],
+                  metadata={"unattended": True})
+    t = _tools(c, s["id"])[0]
+    assert t["state"] == "completed" and "Approved" in t["output"]

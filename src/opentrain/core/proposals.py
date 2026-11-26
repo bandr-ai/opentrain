@@ -73,7 +73,7 @@ class Proposals:
         if not meta.get("unattended"):
             return None
         auto = meta.get("auto_approve") or []
-        if all(any(fnmatch.fnmatchcase(n, a) for a in auto) for n in needs) and auto:
+        if not needs or (auto and all(any(fnmatch.fnmatchcase(n, a) for a in auto) for n in needs)):
             return "approved", "approved automatically (opentrain run --yes)", "approve"
         return ("skipped", "unattended run: nobody can approve this step. Stop here and say what you would do "
                 "next; the user can rerun with --yes or continue in the app.", "skip")

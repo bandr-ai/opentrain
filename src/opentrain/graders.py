@@ -5,8 +5,9 @@ A dataset names its grader in ``meta.json``::
     {"type": "exact"}                          same text as the reference (case and spacing ignored)
     {"type": "contains"}                       the reference appears in the answer
     {"type": "regex", "pattern": "..."}        the answer matches the pattern (or the reference, if none);
-                                               with a capture group, what it captures must equal the
-                                               reference (or what the pattern captures in it)
+                                               with a group named answer, (?P<answer>...), what it
+                                               captures must equal the reference (or what it captures
+                                               in the reference)
     {"type": "json"}                           the answer parses as JSON equal to the reference's JSON
     {"type": "number", "tolerance": 0.01}      the last number in the answer equals the reference's
     {"type": "judge", "rubric": "...",         a model grades against the rubric and the reference,
@@ -66,8 +67,9 @@ class Grade:
     cost: float = 0.0
 
 
-def check(spec: dict[str, Any]) -> dict[str, Any]:
-    """Validate a grader spec; returns it normalized."""
+def check(spec: dict[str, Any], directory: Path | None = None) -> dict[str, Any]:
+    """Validate a grader spec; returns it normalized. With the project ``directory``, a python
+    grader's file is read and compiled too (it must be a .py file in the project)."""
     if not isinstance(spec, dict) or spec.get("type") not in KINDS:
         raise GraderError(f"grader type must be one of {', '.join(KINDS)}")
     if spec["type"] == "regex" and spec.get("pattern"):
@@ -80,8 +82,9 @@ def check(spec: dict[str, Any]) -> dict[str, Any]:
     if spec["type"] == "python":
         if not spec.get("path") and not spec.get("source"):
             raise GraderError("a python grader needs path: a .py file defining reward(prompt, answer, reference)")
+        src = spec.get("source") or (reward_source(spec, directory) if directory is not None else "")
         try:
-            compile(spec.get("source") or "", spec.get("path") or "reward.py", "exec")
+            compile(src, spec.get("path") or "reward.py", "exec")
         except SyntaxError as exc:
             raise GraderError(f"the reward file does not parse: {exc}") from None
     return spec
@@ -127,14 +130,15 @@ def grade(spec: dict[str, Any], prompt: str, answer: str, reference: str | None,
         flags = re.S | (re.I if spec.get("ignore_case", True) else 0)
         pat = spec.get("pattern") or re.escape((reference or "").strip())
         m = re.search(pat, answer or "", flags)
-        if m and m.groups() and reference is not None:
-            # a capture group extracts the answer (a letter, a number): it must equal the reference's
-            got = _norm(next((g for g in m.groups() if g is not None), ""))
+        if "answer" in re.compile(pat).groupindex and reference is not None:
+            # a group named answer extracts it (a letter, a number): it must equal the reference's
+            got = m.group("answer") if m else None
+            if got is None:
+                return Grade(0.0, False, "no answer found")
             rm = re.search(pat, reference, flags)
-            want = _norm(next((g for g in rm.groups() if g is not None), "")) if rm and rm.groups() else \
-                _norm(reference)
-            s = float(got == want)
-            return Grade(s, s >= thr, "" if s else f"extracted {got!r}, expected {want!r}")
+            want = rm.group("answer") if rm and rm.group("answer") is not None else reference
+            s = float(_norm(got) == _norm(want))
+            return Grade(s, s >= thr, "" if s else f"extracted {_norm(got)!r}, expected {_norm(want)!r}")
         s = float(m is not None)
         return Grade(s, s >= thr, "" if s else "no match")
     if kind == "json":
@@ -201,8 +205,14 @@ def reward_source(spec: dict[str, Any], directory: Path | None) -> str:
     """The python grader's code: carried in the spec (on a GPU), else read from the project."""
     if spec.get("source"):
         return spec["source"]
+    if directory is None:
+        raise GraderError("a python grader reads its file from the project; no project here")
+    root = Path(directory).resolve()
     path = Path(spec["path"]).expanduser()
-    path = path if path.is_absolute() or directory is None else Path(directory) / path
+    path = (path if path.is_absolute() else root / path).resolve()
+    # the reward file is project code: never something under .opentrain (held-out rows, the record)
+    if path.suffix != ".py" or root not in path.parents or (root / ".opentrain") in (path, *path.parents):
+        raise GraderError(f"the reward must be a .py file in the project, outside .opentrain: {spec['path']}")
     try:
         return path.read_text()
     except OSError as exc:
@@ -222,7 +232,10 @@ def load_reward(source: str, function: str = "reward"):
         reason = ""
         if isinstance(out, (tuple, list)):
             out, reason = out[0], str(out[1]) if len(out) > 1 else ""
-        return max(0.0, min(1.0, float(out))), reason
+        score = float(out)
+        if score != score or score in (float("inf"), float("-inf")):  # NaN or infinite: no credit
+            return 0.0, "reward was not a finite number"
+        return max(0.0, min(1.0, score)), reason
 
     return call
 
@@ -270,7 +283,7 @@ def describe(spec: dict[str, Any]) -> str:
     if k == "python":
         return f"reward function in {spec.get('path') or 'the job'}"
     if k == "regex" and spec.get("pattern"):
-        if re.compile(spec["pattern"]).groups:
+        if "answer" in re.compile(spec["pattern"]).groupindex:
             return f"extracts /{spec['pattern']}/ and compares it with the reference"
         return f"matches /{spec['pattern']}/"
     return {"exact": "exact match", "contains": "contains the reference", "regex": "matches the reference",

@@ -112,20 +112,26 @@ def test_regex_with_a_capture_compares_and_letters_are_suggested():
     from opentrain.core.tools.data import suggest_grader
     from opentrain.graders import describe, grade
 
-    sp = {"type": "regex", "pattern": r"^\W*([A-D])\b"}
+    sp = {"type": "regex", "pattern": r"^\W*(?P<answer>[A-D])\b"}
     assert grade(sp, "", "B. because", "B").passed
     assert not grade(sp, "", "A", "B").passed  # matching the shape is not enough
     assert grade({"type": "regex", "pattern": "yes"}, "", "oh yes", None).passed
     assert "compares" in describe(sp)
+    # plain groups keep meaning "matches"; an empty named group is no answer
+    assert grade({"type": "regex", "pattern": "(refund|return) policy"}, "", "see our return policy", "x").passed
+    assert not grade({"type": "regex", "pattern": r"final:\s*(?P<answer>\d+)?"}, "", "final: dunno", "7").passed
     rows = [{"messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": x}]} for x in "ABCDA"]
-    assert suggest_grader(rows)["type"] == "regex"
+    sg = suggest_grader(rows)
+    assert sg["type"] == "regex" and grade(sg, "", "I think the answer is C", "C").passed
+    assert grade(sg, "", "A patient with fever, so C.", "C").passed
 
 
 def test_reasoning_is_stripped_before_grading():
-    from opentrain.core.complete import THINK
+    from opentrain.core.complete import THINK, THINK_OPEN
 
-    assert THINK.sub("", "A\n</think>\n\nA") == "A"
+    assert THINK_OPEN.sub("", "A\n</think>\n\nA") == "A"  # our served Qwen: <think> was in the prompt
     assert THINK.sub("", "<think>hm</think> B") == "B"
+    assert THINK.sub("", "Use the closing tag </think> to end it.") == "Use the closing tag </think> to end it."
     assert THINK.sub("", "plain") == "plain"
 
 
@@ -190,3 +196,18 @@ def test_spent_and_held_are_told_apart(tmp_path):
     assert led.reserved() == 1.5 and led.committed() == 1.61 and led.remaining() == 0.39
     led.settle(a, 0.6)
     assert led.reserved() == 0 and led.committed() == 0.71
+
+
+def test_the_gate_ignores_evals_under_an_old_grader(live):
+    from opentrain.evals import latest, run
+
+    c = live.client(live.proj)
+    _upload(c, "gr", 60)
+    c.patch("/api/dataset/gr", {"grader": {"type": "exact"}})
+    state = live.proj / ".opentrain"
+    ScriptedProvider.register("gr-m", [])
+    run(state, live.proj, "gr", "scripted/gr-m")
+    c.patch("/api/dataset/gr", {"grader": {"type": "contains"}})
+    assert latest(state, "gr", "scripted/gr-m") is None
+    new = run(state, live.proj, "gr", "scripted/gr-m", limit=3)
+    assert latest(state, "gr", "scripted/gr-m")["id"] == new["id"]

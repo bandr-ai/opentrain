@@ -222,8 +222,10 @@ async def runpod_login_check(request: web.Request):
 
     try:
         hint = await asyncio.to_thread(login_check, request.match_info["rid"])
-    except (RunPodError, OSError) as exc:
+    except RunPodError as exc:  # denied or expired: the sign-in is over
         raise ApiError(400, str(exc)) from None
+    except OSError:  # a network blip while polling: keep waiting
+        hint = None
     return ok({"connected": bool(hint), "hint": hint})
 
 

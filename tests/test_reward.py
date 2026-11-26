@@ -54,7 +54,32 @@ def test_rl_on_a_dataset_ships_the_reward(live):
     r = c.post("/api/outside/call", {"name": "dataset_recipe", "input": {"name": "env", "method": "rl"}})
     assert not r["is_error"], r["output"]
     out = json.loads(r["output"])
-    assert out["method"] == "rl" and out["extra"]["grader"]["source"] == REWARD
+    assert out["method"] == "rl" and "source" not in out["extra"]["grader"]  # never shown
+    from opentrain.core.tools.data import recipe_for
+
+    class Ctx:  # what dataset_train sees: the code travels with the job
+        project = type("P", (), {"directory": live.proj, "state": live.proj / ".opentrain"})()
+    assert recipe_for(Ctx(), "env", "rl")["extra"]["grader"]["source"] == REWARD
+
+
+def test_a_reward_path_cannot_reach_sealed_rows(live):
+    c = live.client(live.proj)
+    content = "".join(json.dumps({"question": f"q{i}", "answer": "a"}) + "\n" for i in range(20))
+    c.post("/api/dataset/leak/upload", {"filename": "leak.jsonl", "content": content})
+    for path in (".opentrain/heldout/datasets/leak.jsonl", "../outside.py", ".opentrain/x.py", "notes.txt"):
+        r = c.post("/api/outside/call", {"name": "dataset_edit", "input": {
+            "name": "leak", "grader": {"type": "python", "path": path}}})
+        assert r["is_error"], path
+    r = c.post("/api/outside/call", {"name": "dataset_edit", "input": {
+        "name": "leak", "grader": {"type": "python", "path": "r.py", "source": "def reward(p,a,r): return 1"}}})
+    assert r["is_error"]  # no file: a source given inline is ignored, not trusted
+
+
+def test_a_bad_reward_scores_zero_not_crash():
+    fn = grader_fn({"type": "python", "source": "def reward(p, a, r):\n    return r.strip() == a\n"})
+    assert fn("q", "x", None) == 0.0  # raised on None: 0, the job goes on
+    nan = grader_fn({"type": "python", "source": "def reward(p, a, r):\n    return float('nan')\n"})
+    assert nan("q", "x", "x") == 0.0
 
 
 def test_dataset_search_and_peek_shapes():
