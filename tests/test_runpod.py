@@ -161,8 +161,8 @@ def test_a_new_project_trains_where_it_can(monkeypatch, tmp_path):
 
 
 def test_qwen3_8b_distils_from_14b():
-    from opentrain.recipes import teacher_for
     from opentrain.backends.modal_backend import loop_gpu
+    from opentrain.recipes import teacher_for
 
     assert teacher_for("Qwen/Qwen3-8B") == "Qwen/Qwen3-14B"
     assert loop_gpu("Qwen/Qwen3-8B", "opd", "Qwen/Qwen3-14B")[0] == "H200"

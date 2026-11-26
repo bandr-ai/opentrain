@@ -192,9 +192,11 @@ def cmd_web(a: argparse.Namespace) -> int:
 
 
 def cmd_pair(a: argparse.Namespace) -> int:
-    c = _client(Path(a.dir).resolve(), a.server, a.password)
-    out = c.post("/api/pair")
-    print(out["url"])
+    import urllib.parse
+
+    directory = Path(a.dir).resolve()
+    c = _client(directory, a.server, a.password)
+    print(c.post("/api/pair")["url"] + "?next=" + urllib.parse.quote(f"/?directory={directory}"))
     return 0
 
 
