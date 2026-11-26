@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from ..plugs import JobStatus, TrainSpec
-from . import JobStore, missing_modules
+from . import JobStore, missing_modules, only_methods
 
 WORKER = "opentrain.backends.tinker_worker"
 
@@ -204,6 +204,7 @@ class TinkerBackend:
         return True, "ready (tinker SDK, tinker-cookbook renderers, key from TINKER_API_KEY)"
 
     def estimate(self, spec: TrainSpec) -> float:
+        only_methods("tinker", spec)
         price = price_per_mtok(spec)
         tokens = 0
         for line in Path(spec.data).read_text().splitlines():

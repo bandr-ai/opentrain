@@ -102,6 +102,7 @@ def cookie_key(password: str) -> bytes:
     signed everyone out each time. Falls back to the password if the file cannot be written."""
     import os
     from pathlib import Path
+
     from .service import state_home
 
     path = Path(os.environ.get("OPENTRAIN_COOKIE_KEY_FILE") or state_home() / "cookie.key")

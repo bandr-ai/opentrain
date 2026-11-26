@@ -167,7 +167,8 @@ class Server:
         return {k: m[k] for k in ("file", "examples", "sha256", "skipped")}
 
     def t_train_launch(self, epochs: int | None = None, lora_rank: int | None = None,
-                       learning_rate: float | None = None) -> Any:
+                       learning_rate: float | None = None, method: str | None = None,
+                       extra: dict[str, Any] | None = None, batch_size: int | None = None) -> Any:
         from .backends import get_backend
 
         data = self.state / "data" / "train.jsonl"
@@ -182,10 +183,14 @@ class Server:
         ok, why = backend.available()
         if not ok:
             raise ToolError(f"backend {self.tf.trainer} unavailable: {why}")
-        kw = {k: v for k, v in {"epochs": epochs, "lora_rank": lora_rank, "learning_rate": learning_rate}.items()
+        kw = {k: v for k, v in {"epochs": epochs, "lora_rank": lora_rank, "learning_rate": learning_rate,
+                                "method": method, "extra": extra, "batch_size": batch_size}.items()
               if v is not None}
         spec = TrainSpec(base_model=self.tf.base_model, data=data, name=f"opentrain-{self.run.run_id}", **kw)
-        est = backend.estimate(spec)
+        try:
+            est = backend.estimate(spec)
+        except (ValueError, RuntimeError) as exc:
+            raise ToolError(str(exc)) from None
         try:
             rid = self.ledger.reserve(est, f"training on {self.tf.trainer}", self.run.run_id)
         except BudgetExceeded as exc:
@@ -207,7 +212,8 @@ class Server:
         launched = self._job_event(job_id)
         st = get_backend(launched["backend"], self.state).status(job_id)
         out: dict[str, Any] = {"state": st.state, "progress": st.progress, "cost_usd": st.cost_usd,
-                               "detail": st.detail, "logs": st.logs[-10:], "loss": st.loss}
+                               "detail": st.detail, "logs": st.logs[-10:], "loss": st.loss,
+                               "reward": st.reward}
         if not st.done and st.cost_usd > launched["estimate_usd"] + self.ledger.remaining(self.run.run_id):
             get_backend(launched["backend"], self.state).cancel(job_id)
             out["cancelled"] = "over budget"

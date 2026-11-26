@@ -121,6 +121,56 @@ if MODE == "train":
             if ev["event"] in ("done", "error"):
                 return
 
+    # Rejection sampling, on-policy distillation and RL: ``gpu_train`` (shipped with ``graders``),
+    # sampling with vLLM in the same container, on the serving image's CUDA stack.
+    HERE = os.path.dirname(os.path.abspath(__file__))
+    loop_image = (
+        modal.Image.from_registry("nvidia/cuda:12.9.0-devel-ubuntu22.04", add_python="3.12")
+        .entrypoint([])
+        .uv_pip_install("vllm==0.21.0", "transformers==5.8.1", "peft")
+        .env({"HF_XET_HIGH_PERFORMANCE": "1", "VLLM_ENABLE_V1_MULTIPROCESSING": "0"})
+        .add_local_file(os.path.join(HERE, "gpu_train.py"), "/root/gpu_train.py")
+        .add_local_file(os.path.join(os.path.dirname(HERE), "graders.py"), "/root/graders.py")
+    )
+
+    @app.function(image=loop_image, gpu=gpus("OT_LOOP_GPU", "L40S"), timeout=12 * 3600,
+                  volumes=mounts, secrets=_secrets())
+    def train_loop(job_id: str, spec: dict, rows: list[dict]):
+        import queue
+        import sys
+        import threading
+        import time
+        from importlib.metadata import version as pkg_version
+
+        sys.path.insert(0, "/root")
+        import gpu_train
+        import torch
+
+        events: queue.Queue = queue.Queue()
+        t0 = time.time()
+        yield {"event": "started", "gpu": torch.cuda.get_device_name(0),
+               "versions": {p: pkg_version(p) for p in ("torch", "transformers", "peft", "vllm")}}
+
+        def work() -> None:
+            try:
+                out = f"{ADAPTERS}/{job_id}"
+                summary = gpu_train.run(spec, rows, out, events.put,
+                                        gpu_train.grader_fn((spec.get("extra") or {}).get("grader")))
+                vol.commit()
+                events.put({"event": "done", "adapter": out, **summary, "seconds": round(time.time() - t0, 1)})
+            except Exception as e:  # noqa: BLE001 - the caller records it
+                import traceback
+
+                events.put({"event": "error", "error": f"{type(e).__name__}: {e}",
+                            "trace": traceback.format_exc()[-2000:]})
+
+        threading.Thread(target=work, daemon=True).start()
+        while True:
+            ev = events.get()
+            yield ev
+            if ev["event"] in ("done", "error"):
+                return
+
 if MODE == "serve":
     BASE = os.environ["OT_SERVE_BASE"]
     ADAPTER_RANKS: dict[str, int] = json.loads(os.environ.get("OT_SERVE_ADAPTERS") or "{}")

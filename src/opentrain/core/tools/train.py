@@ -263,7 +263,8 @@ def data_build(ctx: ToolContext, task_ids: list[str] | None = None) -> Any:
     return _refuse(_server(ctx).t_data_build)(task_ids)
 
 
-def train_estimate(ctx: ToolContext, epochs: int | None = None, lora_rank: int | None = None) -> Any:
+def train_estimate(ctx: ToolContext, epochs: int | None = None, lora_rank: int | None = None,
+                   method: str | None = None, extra: dict[str, Any] | None = None) -> Any:
     from ...backends import get_backend
     from ...budget import Ledger
     from ...plugs import TrainSpec
@@ -280,7 +281,8 @@ def train_estimate(ctx: ToolContext, epochs: int | None = None, lora_rank: int |
                            "uploads": f"{examples} redacted training examples" if tf.trainer not in ("local", "fake")
                            else "nothing (trains on this machine)"}
     if examples and ok:
-        kw = {k: v for k, v in {"epochs": epochs, "lora_rank": lora_rank}.items() if v is not None}
+        kw = {k: v for k, v in {"epochs": epochs, "lora_rank": lora_rank, "method": method,
+                                "extra": extra}.items() if v is not None}
         out["estimate_usd"] = round(backend.estimate(TrainSpec(base_model=tf.base_model, data=data, name="estimate",
                                                                **kw)), 2)
     elif not examples:
@@ -292,8 +294,12 @@ def train_estimate(ctx: ToolContext, epochs: int | None = None, lora_rank: int |
 
 
 async def job_start(ctx: ToolContext, epochs: int | None = None, lora_rank: int | None = None,
-                    learning_rate: float | None = None) -> ToolResult:
-    est = await asyncio.to_thread(train_estimate, ctx, epochs, lora_rank)
+                    learning_rate: float | None = None, method: str | None = None,
+                    extra: dict[str, Any] | None = None, batch_size: int | None = None) -> ToolResult:
+    try:
+        est = await asyncio.to_thread(train_estimate, ctx, epochs, lora_rank, method, extra)
+    except (ValueError, RuntimeError) as exc:  # a backend that cannot run this method says why
+        raise ToolError(str(exc)) from None
     if not est.get("backend_available"):
         raise ToolError(f"trainer {est['trainer']} is not available here: {est['backend_detail']}")
     if not est.get("examples"):
@@ -307,7 +313,8 @@ async def job_start(ctx: ToolContext, epochs: int | None = None, lora_rank: int 
                             "budget_remaining_usd": est["budget_remaining_usd"]}, always=[])
     await ctx.ask("job.start", [est["trainer"]], metadata={"base_model": est["base_model"]})
     srv = await asyncio.to_thread(_server, ctx)
-    r = await asyncio.to_thread(_refuse(srv.t_train_launch), epochs, lora_rank, learning_rate)
+    r = await asyncio.to_thread(_refuse(srv.t_train_launch), epochs, lora_rank, learning_rate, method, extra,
+                                batch_size)
     job = _jobs(ctx).track_backend(ctx.session_id, r["job_id"], est["trainer"],
                                    f"{est['base_model']} on {est['trainer']}", srv.run.run_id, r.get("estimate_usd"))
     return ToolResult(f"Training job {job['id']} launched on {est['trainer']} (backend id {r['job_id']}, estimated "

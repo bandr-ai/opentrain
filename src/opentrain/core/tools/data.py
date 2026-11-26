@@ -287,38 +287,46 @@ def build_training_set(ctx: ToolContext, name: str) -> dict[str, Any]:
 
 
 async def dataset_train(ctx: ToolContext, name: str, epochs: int | None = None, lora_rank: int | None = None,
-                        learning_rate: float | None = None) -> ToolResult:
+                        learning_rate: float | None = None, method: str | None = None,
+                        settings: dict[str, Any] | None = None) -> ToolResult:
     from .train import job_start
 
     manifest = await asyncio.to_thread(build_training_set, ctx, name)
-    r = recipe_for(ctx, name)
+    r = recipe_for(ctx, name, method)
     epochs = epochs or r["epochs"]
     lora_rank = lora_rank or r["lora_rank"]
     learning_rate = learning_rate or r["learning_rate"]
-    res = await job_start(ctx, epochs, lora_rank, learning_rate)
+    extra = {**r["extra"], **(settings or {})}
+    res = await job_start(ctx, epochs, lora_rank, learning_rate, r["method"], extra, r["batch_size"])
     jid = res.metadata.get("job_id")
     if jid:
-        ctx.project.store.update("job", jid, {"dataset": name, "title": f"train on {name}",
+        ctx.project.store.update("job", jid, {"dataset": name, "title": f"{r['method']} on {name}",
+                                              "method": r["method"],
                                               "recipe": {**r, "epochs": epochs, "lora_rank": lora_rank,
-                                                         "learning_rate": learning_rate}})
+                                                         "learning_rate": learning_rate, "extra": extra}})
     res.output = (f"{manifest['examples']} examples from {name}; recipe: {r['why']} (used: rank {lora_rank}, "
                   f"lr {learning_rate:g}, {epochs} epochs). " + res.output)
     return res
 
 
-def recipe_for(ctx: ToolContext, name: str) -> dict[str, Any]:
+def recipe_for(ctx: ToolContext, name: str, method: str | None = None) -> dict[str, Any]:
     from ...datasets import reference_of
     from ...recipes import recipe, task_kind
 
     ds = _ds(ctx)
     rows = _err(ds.rows)(name)
     refs = [reference_of(r) for r in rows]
-    kind = task_kind(ds.meta(name).get("grader"), [x for x in refs if x])
-    return recipe(kind, len(rows), _tf(ctx).base_model, labelled=sum(1 for x in refs if x))
+    grader = ds.meta(name).get("grader")
+    kind = task_kind(grader, [x for x in refs if x])
+    try:
+        return recipe(kind, len(rows), _tf(ctx).base_model, labelled=sum(1 for x in refs if x), method=method,
+                      grader=grader)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
 
 
-def dataset_recipe(ctx: ToolContext, name: str) -> Any:
-    return recipe_for(ctx, name)
+def dataset_recipe(ctx: ToolContext, name: str, method: str | None = None) -> Any:
+    return recipe_for(ctx, name, method)
 
 
 def dataset_promote(ctx: ToolContext, version: str, baseline: str | None = None) -> Any:
@@ -350,10 +358,12 @@ def tools() -> list[Tool]:
     T = lambda *a, **k: Tool(*a, group="data", **k)  # noqa: E731
     obj = {"type": "object"}
     return [
-        T("dataset_recipe", "The tested training recipe for a dataset: task kind, LoRA settings, what to do first "
-          "(distil missing answers) and what to try if the run does not beat the baseline. dataset_train applies it "
-          "by default; read it before proposing a training run.", S({"name": {"type": "string"}}, ["name"]),
-          dataset_recipe),
+        T("dataset_recipe", "The tested training recipe for a dataset: task kind, the plan (which methods suit it, in "
+          "order: sft, opd = on-policy distillation, rl = GRPO, rejection = rejection sampling), the settings for "
+          "one method (default: the plan's first), what to do first and what to try if the run does not beat the "
+          "baseline. dataset_train applies it; read it before proposing a training run.",
+          S({"name": {"type": "string"}, "method": {"type": "string", "enum": ["sft", "rejection", "opd", "rl"]}},
+            ["name"]), dataset_recipe),
         T("datasets", "Every dataset: rows (training, held out, labelled), how answers are graded, latest scores per "
           "model.", S(), datasets_list),
         T("dataset_show", "Training rows of a dataset (held-out rows are sealed).",
@@ -397,10 +407,13 @@ def tools() -> list[Tool]:
         T("model_try", "Ask one model one prompt and see its answer (a version like v3, or provider/model).",
           S({"model": {"type": "string"}, "prompt": {"type": "string"}, "system": {"type": "string"}},
             ["model", "prompt"]), model_try),
-        T("dataset_train", "Train the Trainfile's base model on a dataset's labelled training rows (SFT) on the "
-          "Trainfile's trainer. Checks held-out contamination, then asks before uploading and spending.",
-          S({"name": {"type": "string"}, "epochs": {"type": "integer"}, "lora_rank": {"type": "integer"},
-             "learning_rate": {"type": "number"}}, ["name"]), dataset_train, permission=lambda a: []),
+        T("dataset_train", "Train the Trainfile's base model on a dataset's training rows with one method (sft, "
+          "rejection, opd, rl; default: the recipe's first) on the Trainfile's trainer, with the recipe's settings. "
+          "`settings` overrides the method's own (steps, samples, rounds, teacher, max_new_tokens...). Checks "
+          "held-out contamination, then asks before uploading and spending.",
+          S({"name": {"type": "string"}, "method": {"type": "string", "enum": ["sft", "rejection", "opd", "rl"]},
+             "epochs": {"type": "integer"}, "lora_rank": {"type": "integer"}, "learning_rate": {"type": "number"},
+             "settings": obj}, ["name"]), dataset_train, permission=lambda a: []),
         T("dataset_promote", "The gate for a version trained on a dataset: it must beat the baseline (what is live, or "
           "the model you name) on the same held-out rows, with no regressions unless the Trainfile allows them.",
           S({"version": {"type": "string"}, "baseline": {"type": "string"}}, ["version"]), dataset_promote,

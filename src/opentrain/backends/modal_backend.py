@@ -74,6 +74,48 @@ def train_gpu(model: str) -> list[str]:
     raise ModalError(f"{model}: LoRA on one GPU supports models up to about 40B here")
 
 
+def loop_gpu(model: str, method: str, teacher: str | None = None) -> list[str]:
+    """GPUs for rejection sampling, distillation and RL: the policy, a vLLM sampler (about a third of
+    the GPU) and, for distillation, the teacher share one GPU."""
+    if method == "sft":
+        return train_gpu(model)
+    p = (params_b(model) or 8) + ((params_b(teacher) or 8) if method == "opd" else 0)
+    if p <= 6:
+        return ["L40S", "A100-80GB", "H100"]
+    if p <= 16:
+        return ["A100-80GB", "H100", "H200"]
+    if p <= 30:
+        return ["H200", "B200"]
+    raise ModalError(f"{model} ({method}{', teacher ' + teacher if teacher else ''}): too large for one GPU here; "
+                     "use a smaller student or teacher")
+
+
+def gpu_seconds(spec: TrainSpec, rows: list[dict[str, Any]]) -> float:
+    """A rough duration. Throughputs are conservative rules of thumb for LoRA on one GPU (training
+    ~8k tokens/s for a 1B model, sampling ~2.5k tokens/s with vLLM in eager mode), scaled by model
+    size; startup is image + weights. Measured runs land well under it (docs/RECIPES.md)."""
+    from .gpu_train import settings
+
+    p = max(params_b(spec.base_model) or 8, 0.5)
+    train_tps, sample_tps = 8000 / p, 2500 / max(1.0, p / 2)
+    prompt = sum(len(json.dumps(r.get("messages", [])[:-1])) / 4 for r in rows) / max(1, len(rows))
+    answer = sum(len(str(r.get("messages", [{}])[-1].get("content", ""))) / 4 for r in rows) / max(1, len(rows))
+    if spec.method == "sft":
+        return 240 + len(rows) * (prompt + answer) * spec.epochs / train_tps
+    s = settings({"method": spec.method, "extra": spec.extra})
+    gen = int(s["max_new_tokens"]) * 0.6  # most answers stop before the cap
+    if spec.method == "rejection":
+        n = len(rows) * int(s["samples"]) * int(s["rounds"])
+        kept = len(rows) * int(s["keep"]) * int(s["rounds"])
+        return 420 + n * gen / sample_tps + kept * (prompt + gen) / train_tps
+    n = int(s["steps"]) * int(s["prompts_per_step"]) * int(s["samples"])
+    seconds = 420 + n * gen / sample_tps + n * (prompt + gen) * 2 / train_tps
+    if spec.method == "opd":
+        t = max(params_b(s.get("teacher") or "") or 8, 0.5)
+        seconds += 120 + n * (prompt + gen) / (24000 / t)
+    return seconds
+
+
 def serve_gpu(model: str) -> list[str]:
     p = params_b(model) or 8
     if p <= 4:
@@ -145,13 +187,11 @@ class ModalBackend:
         return (True, f"ready ({how})") if ok else (False, how)
 
     def estimate(self, spec: TrainSpec) -> float:
-        """GPU seconds at list price: ~4 minutes to start (image, weights) plus tokens at a rough
-        LoRA throughput for the model's size, padded 20%. An estimate; the job reports the real cost."""
-        tokens = sum(len(json.dumps(r.get("messages", []))) / 4 for r in _rows(spec.data)) * spec.epochs
-        p = params_b(spec.base_model) or 8
-        seconds = 240 + tokens / (8000 / max(p, 0.5))
-        gpu = spec.extra.get("gpu") or train_gpu(spec.base_model)[0]
-        return round(seconds * rate(gpu) * 1.2, 4)
+        """GPU seconds at list price, padded 20-30%: see ``gpu_seconds``. The job reports the real cost."""
+        rows = _rows(spec.data)
+        gpu = spec.extra.get("gpu") or loop_gpu(spec.base_model, spec.method, spec.extra.get("teacher"))[0]
+        pad = 1.2 if spec.method == "sft" else 1.3
+        return round(gpu_seconds(spec, rows) * rate(gpu) * pad, 4)
 
     def launch(self, spec: TrainSpec) -> str:
         ok, why = self.available()
@@ -159,7 +199,8 @@ class ModalBackend:
             raise RuntimeError(f"modal backend unavailable: {why}")
         if not Path(spec.data).is_file():
             raise FileNotFoundError(f"training data {spec.data} does not exist")
-        gpus = [spec.extra["gpu"]] if spec.extra.get("gpu") else train_gpu(spec.base_model)
+        gpus = ([spec.extra["gpu"]] if spec.extra.get("gpu")
+                else loop_gpu(spec.base_model, spec.method, spec.extra.get("teacher")))
         job = self.store.new(self.name, spec, detail=f"starting on Modal ({gpus[0]})", gpu=gpus)
         self.store.spawn("opentrain.backends.modal_backend", job["job_id"])
         return job["job_id"]
@@ -194,17 +235,19 @@ def run(store: JobStore, job: dict[str, Any]) -> None:
 
     jid = job["job_id"]
     spec = spec_from_dict(job["spec"])
-    gpus = job.get("gpu") or train_gpu(spec.base_model)
+    gpus = job.get("gpu") or loop_gpu(spec.base_model, spec.method, spec.extra.get("teacher"))
     gpus = [gpus] if isinstance(gpus, str) else gpus
     rows = [prompt_completion(r) for r in _rows(spec.data)]
-    store.log(jid, f"{len(rows)} examples; base {spec.base_model}; LoRA rank {spec.lora_rank}; GPU {' or '.join(gpus)}")
-    mod = load_app(OT_MODAL_MODE="train", OT_TRAIN_GPU=json.dumps(gpus))
+    store.log(jid, f"{len(rows)} examples; {spec.method} on {spec.base_model}; LoRA rank {spec.lora_rank}; "
+                   f"GPU {' or '.join(gpus)}")
+    mod = load_app(OT_MODAL_MODE="train", OT_TRAIN_GPU=json.dumps(gpus), OT_LOOP_GPU=json.dumps(gpus))
+    fn = mod.train if spec.method == "sft" else mod.train_loop
     gpu = gpus[0]
     per_s = rate(gpus)
     curve: list[list[float]] = []
     started = None
     with modal.enable_output(), mod.app.run():
-        for ev in mod.train.remote_gen(jid, spec_to_dict(spec), rows):
+        for ev in fn.remote_gen(jid, spec_to_dict(spec), rows):
             now = time.time()
             if ev["event"] == "started":
                 started = now
@@ -216,13 +259,24 @@ def run(store: JobStore, job: dict[str, Any]) -> None:
             if ev["event"] == "step":
                 total = ev["total"] or 1
                 curve.append([round(ev["step"] / total, 4), ev["loss"]])
+                extra = {k: ev[k] for k in ("reward", "kl") if k in ev}
+                shown = (f" · reward {ev['reward']:.0%}" if "reward" in ev else "") + (
+                    f" · kl {ev['kl']:.3f}" if "kl" in ev else "")
                 store.update(jid, progress=round(ev["step"] / total, 4), loss=ev["loss"], cost_usd=cost,
-                             detail=f"step {ev['step']}/{total} · loss {ev['loss']:.3f} · {gpu}")
-                store.log(jid, f"step {ev['step']}/{total} loss {ev['loss']:.4f}")
+                             detail=f"step {ev['step']}/{total} · loss {ev['loss']:.3f}{shown} · {gpu}", **extra)
+                store.log(jid, f"step {ev['step']}/{total} loss {ev['loss']:.4f}"
+                               + "".join(f" {k}={v}" for k, v in extra.items()) + (f" ({ev['note']})" if ev.get("note") else ""))
+            elif ev["event"] == "log":
+                store.log(jid, ev["note"])
+                store.update(jid, detail=f"{ev['note']} · {gpu}", cost_usd=cost)
             elif ev["event"] == "error":
+                if ev.get("trace"):
+                    store.log(jid, ev["trace"])
                 raise ModalError(ev["error"])
             elif ev["event"] == "done":
                 store.log(jid, f"adapter saved on the opentrain volume: {ev['adapter']} ({ev['seconds']}s)")
+                if ev.get("rounds"):
+                    store.update(jid, rounds=ev["rounds"])
                 store.update(jid, state="succeeded", progress=1.0, checkpoint=f"modal://{jid}", cost_usd=cost,
                              adapter_rank=spec.lora_rank,
                              detail=f"done in {round(ev['seconds'] / 60, 1)} min on {gpu} · ${cost:.2f}")

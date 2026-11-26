@@ -64,6 +64,13 @@ def pid_alive(pid: int | None) -> bool:
     return True
 
 
+def only_methods(backend: str, spec: TrainSpec, methods: tuple[str, ...] = ("sft",)) -> None:
+    """Refuse a training method this backend does not run, naming the ones that do."""
+    if spec.method not in methods:
+        raise ValueError(f"trainer {backend} runs {', '.join(methods)}, not {spec.method}; "
+                         "rejection, opd and rl run on trainer modal or runpod")
+
+
 def spec_to_dict(spec: TrainSpec) -> dict[str, Any]:
     d = asdict(spec)
     d["data"] = str(spec.data)
@@ -170,7 +177,8 @@ class JobStore:
         return JobStatus(job_id=jid, state=job["state"], cost_usd=float(job.get("cost_usd") or 0.0),
                          checkpoint=job.get("checkpoint"), progress=job.get("progress"),
                          detail=job.get("detail") or "", logs=self.logs(jid, tail=20),
-                         loss=job.get("loss") if isinstance(job.get("loss"), (int, float)) else None)
+                         loss=job.get("loss") if isinstance(job.get("loss"), (int, float)) else None,
+                         reward=job.get("reward") if isinstance(job.get("reward"), (int, float)) else None)
 
     def spawn(self, module: str, job_id: str, *, python: list[str] | None = None,
               env: dict[str, str] | None = None) -> int:

@@ -25,7 +25,8 @@ class TrainSpec:
 
     base_model: str
     data: Path
-    method: Literal["sft", "rft"] = "sft"
+    method: Literal["sft", "rejection", "opd", "rl"] = "sft"
+    """sft, rejection sampling, on-policy distillation or RL (GRPO); see ``opentrain.backends.gpu_train``."""
     lora_rank: int = 32
     epochs: int = 2
     learning_rate: float = 1e-4
@@ -48,6 +49,8 @@ class JobStatus:
     logs: list[str] = field(default_factory=list)
     loss: float | None = None
     """The latest training loss, when the backend reports one (drawn as a curve by clients)."""
+    reward: float | None = None
+    """RL-style methods: the mean reward (grader score) of the latest step's samples."""
 
     @property
     def done(self) -> bool:

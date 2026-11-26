@@ -184,6 +184,12 @@ class Jobs:
             if not curve or curve[-1] != point:
                 curve = (curve + [point])[-200:]
             patch.update(loss=st["loss"], curve=curve)
+        if isinstance(st.get("reward"), (int, float)):  # RL-style methods: (progress, mean reward)
+            rc = list(j.get("reward_curve") or [])
+            point = [st.get("progress") or 0.0, st["reward"]]
+            if not rc or rc[-1] != point:
+                rc = (rc + [point])[-200:]
+            patch.update(reward=st["reward"], reward_curve=rc)
         if st["state"] in TERMINAL:
             patch.update(state=st["state"], version=st.get("version"), time={"ended": _now()},
                          error=None if st["state"] == "succeeded" else (st.get("detail") or st["state"]))
