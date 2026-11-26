@@ -79,14 +79,59 @@ def api_key() -> str | None:
 
 
 def runpodctl_key() -> str | None:
+    """The key RunPod's own tools keep in ``~/.runpod/config.toml``: ``[default] api_key`` (``flash
+    login``, runpod-python) or the top-level ``apikey`` (``runpodctl``)."""
     import tomllib
 
     path = Path(os.environ.get("RUNPOD_CONFIG") or Path.home() / ".runpod" / "config.toml")
     try:
-        key = tomllib.loads(path.read_text()).get("apikey") or tomllib.loads(path.read_text()).get("apiKey")
+        doc = tomllib.loads(path.read_text())
     except (OSError, ValueError):
         return None
-    return str(key).strip() or None
+    key = (doc.get("default") or {}).get("api_key") or doc.get("apikey") or doc.get("apiKey")
+    return str(key).strip() if key and str(key).strip() else None
+
+
+GRAPHQL = "https://api.runpod.io/graphql"
+CONSOLE = "https://console.runpod.io"
+
+
+def _graphql(query: str, variables: dict | None = None) -> dict[str, Any]:
+    req = urllib.request.Request(GRAPHQL, data=json.dumps({"query": query, "variables": variables or {}}).encode(),
+                                 headers={"Content-Type": "application/json", "User-Agent": "opentrain"})
+    with urllib.request.urlopen(req, timeout=30) as r:  # noqa: S310 - fixed https host
+        out = json.loads(r.read())
+    if out.get("errors"):
+        raise RunPodError("RunPod: " + "; ".join(e.get("message", "?") for e in out["errors"]))
+    return out.get("data") or {}
+
+
+def browser_login(*, open_browser: bool = True, timeout: float = 600, say=print) -> str:
+    """Sign in to RunPod in the browser, no key pasted: the same approval flow RunPod's own ``flash
+    login`` uses (an auth request, approved at console.runpod.io, that yields an API key). The key is
+    kept in OpenTrain's auth store. Returns a hint of the key."""
+    import webbrowser
+
+    from ..core import integrations
+
+    req = _graphql("mutation { createFlashAuthRequest { id status expiresAt } }").get("createFlashAuthRequest") or {}
+    if not req.get("id"):
+        raise RunPodError("RunPod did not start a sign-in request")
+    url = f"{CONSOLE}/flash/login?request={req['id']}"
+    say(f"Approve OpenTrain's access in your browser:\n  {url}")
+    if open_browser:
+        webbrowser.open(url)
+    end = time.time() + timeout
+    q = "query($id: String!) { flashAuthRequestStatus(flashAuthRequestId: $id) { status apiKey } }"
+    while time.time() < end:
+        st = _graphql(q, {"id": req["id"]}).get("flashAuthRequestStatus") or {}
+        if st.get("apiKey") and st.get("status") in ("APPROVED", "CONSUMED"):
+            integrations.connect("runpod", st["apiKey"])
+            return st["apiKey"][:6] + "…"
+        if st.get("status") in ("DENIED", "EXPIRED", "CONSUMED"):
+            raise RunPodError(f"RunPod sign-in {str(st['status']).lower()}")
+        time.sleep(2)
+    raise RunPodError("RunPod sign-in timed out")
 
 
 def _api(method: str, path: str, body: dict | None = None, *, timeout: float = 60) -> tuple[int, Any]:

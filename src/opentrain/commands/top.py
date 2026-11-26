@@ -25,7 +25,7 @@ from typing import Any
 
 from .. import __version__
 
-VERBS = ("run", "serve", "web", "mcp", "attach", "pair", "stop", "export", "watch", "model", "debug", "help")
+VERBS = ("run", "serve", "web", "mcp", "login", "attach", "pair", "stop", "export", "watch", "model", "debug", "help")
 
 
 def _client(directory: Path, url: str | None = None, password: str | None = None):
@@ -254,6 +254,19 @@ def cmd_model(a: argparse.Namespace) -> int:
     return debug_main(mapping[a.what] + a.rest)
 
 
+def cmd_login(a: argparse.Namespace) -> int:
+    """Sign in to a compute provider in the browser (no key to paste)."""
+    from ..backends import runpod_backend
+
+    try:
+        hint = runpod_backend.browser_login(open_browser=not a.no_open)
+    except (runpod_backend.RunPodError, OSError) as exc:
+        print(f"RunPod sign-in failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Signed in to RunPod (key {hint} kept in OpenTrain's auth store). Trainer runpod is ready.")
+    return 0
+
+
 def cmd_watch(a: argparse.Namespace) -> int:
     from ..cli import debug_main
 
@@ -301,6 +314,11 @@ def parser() -> argparse.ArgumentParser:
                     help="Claude Code config scope for --install (default: project, in .mcp.json)")
     mc.add_argument("--dir", default=".", help="the project (default: here)")
     mc.set_defaults(fn=cmd_mcp)
+
+    lg = sub.add_parser("login", help="sign in to a GPU provider in the browser (runpod)")
+    lg.add_argument("provider", choices=["runpod"])
+    lg.add_argument("--no-open", action="store_true", help="print the link only")
+    lg.set_defaults(fn=cmd_login)
 
     at = sub.add_parser("attach", help="the terminal app against a server elsewhere")
     at.add_argument("url")

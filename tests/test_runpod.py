@@ -118,3 +118,25 @@ def test_a_runpodctl_sign_in_is_enough(tmp_path, monkeypatch):
     cfg.write_text('apikey = "rpa_fromcli"\napiurl = "https://api.runpod.io/graphql"\n')
     monkeypatch.setenv("RUNPOD_CONFIG", str(cfg))
     assert rb.api_key() == "rpa_fromcli"
+
+
+def test_flash_login_keys_count_too(tmp_path, monkeypatch):
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    monkeypatch.setenv("OPENTRAIN_AUTH_FILE", str(tmp_path / "auth.json"))
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[default]\napi_key = "rpa_fromflash"\n')
+    monkeypatch.setenv("RUNPOD_CONFIG", str(cfg))
+    assert rb.api_key() == "rpa_fromflash"
+
+
+def test_browser_login_stores_the_approved_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    monkeypatch.setenv("OPENTRAIN_AUTH_FILE", str(tmp_path / "auth.json"))
+    replies = iter([{"createFlashAuthRequest": {"id": "r1"}},
+                    {"flashAuthRequestStatus": {"status": "PENDING"}},
+                    {"flashAuthRequestStatus": {"status": "APPROVED", "apiKey": "rpa_approved"}}])
+    monkeypatch.setattr(rb, "_graphql", lambda q, v=None: next(replies))
+    monkeypatch.setattr(rb.time, "sleep", lambda s: None)
+    said = []
+    assert rb.browser_login(open_browser=False, say=said.append).startswith("rpa_ap")
+    assert "console.runpod.io/flash/login?request=r1" in said[0] and rb.api_key() == "rpa_approved"
