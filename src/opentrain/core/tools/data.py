@@ -167,11 +167,13 @@ def suggest_grader(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def dataset_add(ctx: ToolContext, name: str, rows: list[dict[str, Any]], description: str | None = None,
-                system: str | None = None) -> Any:
+                system: str | None = None, heldout: float | None = None) -> Any:
     if not rows:
         raise ToolError("rows is empty")
+    if heldout is not None and not 0 <= float(heldout) <= 1:
+        raise ToolError("heldout is a fraction from 0 to 1 (1: evaluation rows; 0: training rows)")
     return _err(_ds(ctx).add)(name, rows, description=description, source={"agent": ctx.agent.name},
-                              system=system, heldout=_tf(ctx).heldout_fraction)
+                              system=system, heldout=_tf(ctx).heldout_fraction if heldout is None else float(heldout))
 
 
 def dataset_edit(ctx: ToolContext, name: str, description: str | None = None, system: str | None = None,
@@ -543,7 +545,10 @@ def tools() -> list[Tool]:
         T("dataset_add", "Add rows you wrote or generated: objects with 'messages' (chat) or prompt and completion. "
           "Use this to build a dataset from the user's description, from documents, or from examples they paste.",
           S({"name": {"type": "string"}, "rows": {"type": "array", "items": obj},
-             "description": {"type": "string"}, "system": {"type": "string"}}, ["name", "rows"]), dataset_add),
+             "description": {"type": "string"}, "system": {"type": "string"},
+             "heldout": {"type": "number", "description": "share sealed for evaluation (default: the Trainfile's); "
+                         "1 for evaluation rows you wrote first, 0 for training rows written after them"}},
+            ["name", "rows"]), dataset_add),
         T("dataset_edit", "Change a dataset: description, system prompt, grader ({type: exact|contains|regex|json|"
           "number|judge|command|python, rubric, pattern, model, command, path, threshold}; python: a .py file "
           "with reward(prompt, answer, reference) -> 0..1, which also runs inside RL), remove rows by id, or set reference "

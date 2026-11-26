@@ -31,7 +31,8 @@ Do only what the user's request needs: an eval question ends at the eval.
 What the tools are for:
 - data: datasets, dataset_show; dataset_search / dataset_peek (Hugging Face, Kaggle);
   dataset_import (a file, hf= or kaggle=; templates reshape columns; heldout=1 for an eval-only
-  benchmark); dataset_add (rows you write); dataset_label (distil answers from a teacher).
+  benchmark); dataset_add (rows you write: heldout=1 for eval rows you write first, 0 for
+  training rows after them); dataset_label (distil answers from a teacher).
 - grading: dataset_edit grader= (exact, contains, regex, json, number, judge, command, or python:
   the user's reward(prompt, answer, reference), which also drives RL); dataset_grade checks it on
   answers you write.

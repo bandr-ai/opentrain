@@ -168,3 +168,12 @@ def test_a_rollout_404_is_retried_not_scored(monkeypatch):
     monkeypatch.setattr(complete, "ROLLOUT_SECONDS", -1)
     with pytest.raises(urllib.error.HTTPError):
         complete._rollout_safe(object(), 5)
+
+
+def test_rows_you_write_go_where_you_say(live):
+    c = live.client(live.proj)
+    rows = [{"prompt": f"p{i}", "completion": "c"} for i in range(10)]
+    _, out = _call(c, "dataset_add", name="w", rows=rows, heldout=1)
+    assert out["added_heldout"] == 10 and out["added_train"] == 0
+    _, out = _call(c, "dataset_add", name="w", rows=[{"prompt": f"t{i}", "completion": "c"} for i in range(10)], heldout=0)
+    assert out["added_train"] == 10 and out["added_heldout"] == 0

@@ -16,6 +16,12 @@ Look first (`dataset_import` a slice, or read the file), then choose:
 - **Raw material** (docs, manuals, policies, tables, tickets, code): not training data yet. Turn it
   into tasks (step 2).
 
+Decide what the model will see at run time. If it gets the source in its prompt (a policy pasted
+in, retrieved passages), put it in each row's prompt or the dataset's `system`: the task is applying
+it. If it must answer without it, the task is knowing it, and an untrained model will score near
+zero: say so when you report baselines, and measure a strong model with the source in its prompt as
+the real bar to reach.
+
 ## 2. Choose the task format
 
 From what the model must do after training, not from what is easy to generate:
@@ -35,8 +41,8 @@ prefer it when the use case allows. Ask one `question` if two formats fit equall
 ## 3. Evaluation rows first
 
 Set aside part of the source (a section, a time range, some documents) and write the evaluation
-rows from it first, into their own dataset with `heldout=1` or as the training dataset's first
-rows. Do not write training rows from that part. Rows you write after seeing the eval rows are
+rows from it first: `dataset_add ... heldout=1` (all sealed). Then add training rows with
+`heldout=0`, so none of them is sealed by chance. Do not write training rows from the eval part. Rows you write after seeing the eval rows are
 paraphrases of them, and the overlap check cannot catch a paraphrase.
 
 ## 4. The build loop
@@ -46,7 +52,7 @@ Repeat until the set covers the source and the task's variety (a few hundred row
 for a narrow task; open-ended tasks need fewer, better rows):
 
 1. Take the next chunk of the source.
-2. Write a batch of rows from it (`dataset_add`; a script that emits JSONL and `dataset_import
+2. Write a batch of rows from it (`dataset_add heldout=0`; a script that emits JSONL and `dataset_import
    path=` for big, regular conversions). Each prompt must be answerable from what the model will
    see at run time, so put the needed context in the prompt. One right answer, varied wording and
    difficulty, no copies.
