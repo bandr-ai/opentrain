@@ -430,8 +430,15 @@ async def dataset_peek(ctx: ToolContext, hf: str) -> Any:
     return await asyncio.to_thread(_err(peek_hf), hf)
 
 
-def dataset_recipe(ctx: ToolContext, name: str, method: str | None = None) -> Any:
+def dataset_recipe(ctx: ToolContext, name: str, method: str | None = None, epochs: int | None = None,
+                   lora_rank: int | None = None, learning_rate: float | None = None,
+                   settings: dict[str, Any] | None = None) -> Any:
+    """The recipe, with any overrides you plan to pass to dataset_train applied, priced as it would run."""
     r = recipe_for(ctx, name, method)
+    over = {k: v for k, v in (("epochs", epochs), ("lora_rank", lora_rank), ("learning_rate", learning_rate))
+            if v is not None}
+    if over or settings:
+        r = {**r, **over, "extra": {**r["extra"], **(settings or {})}, "overridden": sorted(over) + sorted(settings or {})}
     return {**r, "cost": recipe_cost(ctx, name, r)}
 
 
@@ -505,7 +512,10 @@ def tools() -> list[Tool]:
           "order: sft, opd = on-policy distillation, rl = GRPO, rejection = rejection sampling), the settings for "
           "one method (default: the plan's first), what to do first and what to try if the run does not beat the "
           "baseline. dataset_train applies it; read it before proposing a training run.",
-          S({"name": {"type": "string"}, "method": {"type": "string", "enum": ["sft", "rejection", "opd", "rl"]}},
+          S({"name": {"type": "string"}, "method": {"type": "string", "enum": ["sft", "rejection", "opd", "rl"]},
+             "epochs": {"type": "integer"}, "lora_rank": {"type": "integer"}, "learning_rate": {"type": "number"},
+             "settings": {"type": "object", "description": "the same overrides you will pass to dataset_train, "
+                          "so the price matches the run"}},
             ["name"]), dataset_recipe),
         T("datasets", "Every dataset: rows (training, held out, labelled), how answers are graded, latest scores per "
           "model.", S(), datasets_list),

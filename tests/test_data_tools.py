@@ -127,3 +127,14 @@ def test_reasoning_is_stripped_before_grading():
     assert THINK.sub("", "A\n</think>\n\nA") == "A"
     assert THINK.sub("", "<think>hm</think> B") == "B"
     assert THINK.sub("", "plain") == "plain"
+
+
+def test_recipe_prices_the_overrides_you_will_run(live, monkeypatch):
+    monkeypatch.setenv("OPENTRAIN_FAKE_BACKEND", "1")
+    (live.proj / "Trainfile").write_text("trainer      fake\nbase model   Qwen/Qwen2.5-0.5B-Instruct\n")
+    c = live.client(live.proj)
+    _upload(c, "ov", 40)
+    _, base = _call(c, "dataset_recipe", name="ov")
+    _, one = _call(c, "dataset_recipe", name="ov", epochs=1, learning_rate=5e-5)
+    assert one["epochs"] == 1 and one["learning_rate"] == 5e-5 and one["overridden"] == ["epochs", "learning_rate"]
+    assert "usd" in base["cost"] and one["cost"]["usd"] <= base["cost"]["usd"]

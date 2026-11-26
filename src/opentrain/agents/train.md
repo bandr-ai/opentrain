@@ -114,7 +114,8 @@ Establish each of these as far as the request needs it, in whatever order the si
     environment that scores answers.
   - `rejection` (rejection sampling): train on the model's own answers that pass. Cheaper and
     steadier than RL, same grader requirement.
-  `dataset_train method=...` applies the recipe (`settings` overrides it). `rl`, `opd` and
+  `dataset_train method=...` applies the recipe (`settings` overrides it); to change settings,
+  price them first with `dataset_recipe` given the same overrides, and quote that. `rl`, `opd` and
   `rejection` run on `modal` or `runpod` (Fireworks: `rl` and `rejection` on its serverless
   models); `trainer_set` switches the trainer and base model. One method per run; if it does not
   beat the baseline, follow the recipe's `if_it_does_not_beat_the_baseline`, one change per run.
