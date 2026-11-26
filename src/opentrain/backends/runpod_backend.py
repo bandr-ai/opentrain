@@ -71,9 +71,22 @@ class RunPodError(RuntimeError):
 
 
 def api_key() -> str | None:
+    """``/connect runpod``, ``RUNPOD_API_KEY``, or the key ``runpodctl`` keeps in ``~/.runpod/config.toml``
+    (``runpodctl doctor`` writes it), so a machine already signed in to RunPod's CLI needs nothing more."""
     from ..core import credentials
 
-    return credentials.env_for("runpod", KEY_ENV)
+    return credentials.env_for("runpod", KEY_ENV) or runpodctl_key()
+
+
+def runpodctl_key() -> str | None:
+    import tomllib
+
+    path = Path(os.environ.get("RUNPOD_CONFIG") or Path.home() / ".runpod" / "config.toml")
+    try:
+        key = tomllib.loads(path.read_text()).get("apikey") or tomllib.loads(path.read_text()).get("apiKey")
+    except (OSError, ValueError):
+        return None
+    return str(key).strip() or None
 
 
 def _api(method: str, path: str, body: dict | None = None, *, timeout: float = 60) -> tuple[int, Any]:

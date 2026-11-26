@@ -109,3 +109,12 @@ def test_kaggle_reads_the_largest_table_in_the_zip(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("KAGGLE_KEY", "me:abc")
     assert kaggle_auth()["Authorization"].startswith("Basic ")
+
+
+def test_a_runpodctl_sign_in_is_enough(tmp_path, monkeypatch):
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    monkeypatch.setenv("OPENTRAIN_AUTH_FILE", str(tmp_path / "auth.json"))
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('apikey = "rpa_fromcli"\napiurl = "https://api.runpod.io/graphql"\n')
+    monkeypatch.setenv("RUNPOD_CONFIG", str(cfg))
+    assert rb.api_key() == "rpa_fromcli"
