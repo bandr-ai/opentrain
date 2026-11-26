@@ -6,8 +6,9 @@ A *target* is either
   ``openrouter/qwen/qwen3-8b``): the same providers the agent runs on, or
 - a model version from the registry, ``v3`` (or ``version:v3``): its OpenAI-compatible endpoint
   (Tinker, Modal, Fireworks, a local vLLM/MLX server), or
-- ``modal/<hugging face id>`` (``modal/Qwen/Qwen3-4B-Instruct-2507``): an open base model served on
-  the user's Modal account, so any open model can be measured before training it.
+- ``modal/<hugging face id>`` or ``runpod/<hugging face id>`` (``modal/Qwen/Qwen3-4B-Instruct-2507``): an
+  open base model served on the user's own Modal or RunPod account, so any open model can be
+  measured before training it.
 
 Calls are synchronous and meant for worker threads (jobs). Claude Code runs ``claude -p`` with no
 tools and none of the user's settings, so it only answers.
@@ -62,8 +63,8 @@ def complete(target: str, messages: list[dict[str, str]], *, state: Path | None 
     provider = target.split("/", 1)[0]
     if provider == "claude-code":
         return _claude_code(target.split("/", 1)[1], messages, timeout, t0)
-    if provider == "modal":
-        return _modal(target.split("/", 1)[1], messages, max_tokens, timeout, t0)
+    if provider in HOSTS:
+        return _hosted(provider, target.split("/", 1)[1], messages, max_tokens, timeout, t0)
     return _provider(target, messages, max_tokens, t0)
 
 
@@ -81,8 +82,8 @@ def _version(state: Path, version: str, messages, max_tokens, timeout, t0) -> Co
         ep = endpoint_for(v)
     except ServingError as exc:
         raise CompletionError(str(exc)) from None
-    modal = v.backend == "modal" or v.checkpoint.startswith("modal://")
-    return _openai(ep, version, messages, max_tokens, timeout, t0, modal_base=v.base_model if modal else None)
+    host = next((h for h in HOSTS if v.backend == h or v.checkpoint.startswith(f"{h}://")), None)
+    return _openai(ep, version, messages, max_tokens, timeout, t0, host=(host, v.base_model) if host else None)
 
 
 def _fireworks(v, messages, max_tokens, timeout, t0) -> Completion:
@@ -98,21 +99,34 @@ def _fireworks(v, messages, max_tokens, timeout, t0) -> Completion:
                       output_tokens=c)
 
 
-def _modal(base: str, messages, max_tokens, timeout, t0) -> Completion:
-    """``modal/<hugging face id>``: an open model served on your Modal account (deployed on first use)."""
-    from ..backends import modal_backend
+HOSTS = ("modal", "runpod")
+"""GPU clouds OpenTrain serves open models on itself: ``<host>/<hugging face id>`` targets and versions
+trained there. Each module has ``endpoint``, ``wait_ready`` and ``answering``."""
 
+
+def _host(name: str):
+    if name == "modal":
+        from ..backends import modal_backend
+
+        return modal_backend
+    from ..backends import runpod_backend
+
+    return runpod_backend
+
+
+def _hosted(host: str, base: str, messages, max_tokens, timeout, t0) -> Completion:
+    """``modal/<id>`` or ``runpod/<id>``: an open model served on your own GPU account (started on first use)."""
     try:
-        ep = modal_backend.endpoint(base)
-    except modal_backend.ModalError as exc:
+        ep = _host(host).endpoint(base)
+    except RuntimeError as exc:
         raise CompletionError(str(exc)) from None
-    return _openai(ep, f"modal/{base}", messages, max_tokens, timeout, t0, modal_base=base)
+    return _openai(ep, f"{host}/{base}", messages, max_tokens, timeout, t0, host=(host, base))
 
 
 THINK = re.compile(r"^\s*<think>.*?</think>\s*", re.S)
 
 
-def _openai(ep, label: str, messages, max_tokens, timeout, t0, modal_base: str | None = None) -> Completion:
+def _openai(ep, label: str, messages, max_tokens, timeout, t0, host: tuple[str, str] | None = None) -> Completion:
     headers = {"Content-Type": "application/json"}
     if ep.api_key_env:
         key = os.environ.get(ep.api_key_env)
@@ -120,23 +134,20 @@ def _openai(ep, label: str, messages, max_tokens, timeout, t0, modal_base: str |
             raise CompletionError(f"{label} is served by an endpoint that needs {ep.api_key_env}; /connect it")
         headers["Authorization"] = f"Bearer {key}"
     body = {"model": ep.model, "messages": messages, "max_tokens": max_tokens, "temperature": 0}
-    if modal_base:
-        from ..backends import modal_backend
-
+    mod = _host(host[0]) if host else None
+    if host:
         try:
-            modal_backend.wait_ready(ep)  # a scaled-to-zero endpoint starts on the first request
-        except modal_backend.ModalError as exc:
+            mod.wait_ready(ep)  # a scaled-to-zero endpoint starts on the first request
+        except RuntimeError as exc:
             raise CompletionError(str(exc)) from None
         t0 = time.time()  # the answer's time, not the cold start's
-        if "qwen3" in modal_base.lower() and "instruct" not in modal_base.lower():
+        if "qwen3" in host[1].lower() and "instruct" not in host[1].lower():
             body["chat_template_kwargs"] = {"enable_thinking": False}
     req = urllib.request.Request(f"{ep.base_url}/chat/completions", data=json.dumps(body).encode(), headers=headers)
     cost_of = None
     try:
-        if modal_base:
-            from ..backends import modal_backend
-
-            with modal_backend.answering(modal_base) as cost_of_answer:
+        if host:
+            with mod.answering(host[1]) as cost_of_answer:
                 with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
                     out = json.loads(r.read().decode())
                 cost_of = cost_of_answer()
@@ -149,7 +160,7 @@ def _openai(ep, label: str, messages, max_tokens, timeout, t0, modal_base: str |
     text = (out.get("choices") or [{}])[0].get("message", {}).get("content") or ""
     return Completion(text=THINK.sub("", text), seconds=time.time() - t0, cost=cost_of or 0.0,
                       input_tokens=u.get("prompt_tokens", 0) or 0, output_tokens=u.get("completion_tokens", 0) or 0,
-                      billing="modal-gpu" if modal_base else "api")
+                      billing=f"{host[0]}-gpu" if host else "api")
 
 
 def _flatten(messages: list[dict[str, str]]) -> tuple[str, str]:

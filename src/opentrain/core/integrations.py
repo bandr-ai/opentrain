@@ -34,9 +34,29 @@ INTEGRATIONS: dict[str, tuple[str, str, str, str]] = {
     "fireworks": ("Fireworks", "provider", "FIREWORKS_API_KEY", "https://fireworks.ai/account/api-keys"),
     "tinker": ("Tinker (Thinking Machines)", "trainer", "TINKER_API_KEY", "https://tinker-console.thinkingmachines.ai"),
     "modal": ("Modal (GPUs, your account)", "trainer", "MODAL_TOKEN_ID", "https://modal.com/settings/tokens"),
+    "runpod": ("RunPod (GPU pods, your account)", "trainer", "RUNPOD_API_KEY", "https://console.runpod.io/user/settings"),
     "huggingface": ("Hugging Face", "trainer", "HF_TOKEN", "https://huggingface.co/settings/tokens"),
     "prime": ("Prime Intellect", "trainer", "PRIME_API_KEY", "https://app.primeintellect.ai"),
 }
+
+# Open models OpenTrain trains and serves on rented GPUs (Modal, RunPod): text models vLLM serves
+# with LoRA. "opd" names the same-family teacher on-policy distillation uses (recipes.TEACHERS).
+GPU_MODELS: list[dict[str, Any]] = [
+    {"id": "Qwen/Qwen2.5-0.5B-Instruct", "params": "0.5B", "note": "tiny: cheapest to train and serve; opd teacher "
+                                                                     "Qwen2.5-7B"},
+    {"id": "Qwen/Qwen2.5-1.5B-Instruct", "params": "1.5B", "note": "opd teacher Qwen2.5-7B"},
+    {"id": "Qwen/Qwen3-1.7B", "params": "1.7B", "note": "served without thinking; opd teacher Qwen3-8B"},
+    {"id": "Qwen/Qwen3-4B-Instruct-2507", "params": "4B", "note": "default: strong for its size, no thinking"},
+    {"id": "Qwen/Qwen3-8B", "params": "8B", "note": "served without thinking"},
+    {"id": "Qwen/Qwen3.5-2B", "params": "2B", "note": "newest Qwen; opd teacher Qwen3.5-9B"},
+    {"id": "Qwen/Qwen3.5-4B", "params": "4B", "note": "opd teacher Qwen3.5-9B"},
+    {"id": "Qwen/Qwen3.5-9B", "params": "9B", "note": ""},
+    {"id": "Qwen/Qwen3.5-27B", "params": "27B", "note": "H200 to train"},
+    {"id": "google/gemma-3-1b-it", "params": "1B", "note": "gated: /connect huggingface; opd teacher gemma-3-4b"},
+    {"id": "meta-llama/Llama-3.2-3B-Instruct", "params": "3B", "note": "gated: /connect huggingface"},
+    {"id": "meta-llama/Llama-3.1-8B-Instruct", "params": "8B", "note": "gated: /connect huggingface"},
+    {"id": "Qwen/Qwen3-14B", "params": "14B", "note": "H100 to train"},
+]
 
 # Base models each trainer can fine-tune (LoRA). Tinker's list follows its documentation.
 BASE_MODELS: dict[str, list[dict[str, Any]]] = {
@@ -49,15 +69,8 @@ BASE_MODELS: dict[str, list[dict[str, Any]]] = {
         {"id": "meta-llama/Llama-3.3-70B-Instruct", "params": "70B", "note": ""},
         {"id": "openai/gpt-oss-20b", "params": "20B MoE", "note": ""},
     ],
-    "modal": [
-        {"id": "Qwen/Qwen2.5-0.5B-Instruct", "params": "0.5B", "note": "tiny: cheapest to train and serve"},
-        {"id": "Qwen/Qwen2.5-1.5B-Instruct", "params": "1.5B", "note": ""},
-        {"id": "Qwen/Qwen3-4B-Instruct-2507", "params": "4B", "note": "default: strong for its size, no thinking"},
-        {"id": "Qwen/Qwen3-8B", "params": "8B", "note": "thinks unless told not to"},
-        {"id": "meta-llama/Llama-3.2-3B-Instruct", "params": "3B", "note": "gated: /connect huggingface"},
-        {"id": "meta-llama/Llama-3.1-8B-Instruct", "params": "8B", "note": "gated: /connect huggingface"},
-        {"id": "Qwen/Qwen3-14B", "params": "14B", "note": "H100 to train"},
-    ],
+    "modal": GPU_MODELS,
+    "runpod": GPU_MODELS,
     "local": [
         {"id": "Qwen/Qwen3-0.6B", "params": "0.6B", "note": "runs on a laptop (MPS or CPU)"},
         {"id": "Qwen/Qwen3-1.7B", "params": "1.7B", "note": "laptop with 16GB+"},
@@ -135,7 +148,7 @@ def listing() -> list[dict[str, Any]]:
 def trainers(state: Path) -> list[dict[str, Any]]:
     from ..backends import list_backends
 
-    needs = {"tinker": "tinker", "fireworks": "fireworks", "modal": "modal"}
+    needs = {"tinker": "tinker", "fireworks": "fireworks", "modal": "modal", "runpod": "runpod"}
     return [{"name": n, "available": ok, "detail": why, "credential": needs.get(n),
              "base_models": BASE_MODELS.get(n, [])} for n, ok, why in list_backends(state)]
 

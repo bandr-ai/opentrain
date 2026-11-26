@@ -98,6 +98,14 @@ def endpoint_for(version: Version) -> Endpoint:
                                           int(s.get("lora_rank", 32)))
         except modal_backend.ModalError as exc:
             raise ServingError(str(exc)) from None
+    if version.backend == "runpod" or ck.startswith("runpod://"):
+        from .backends import runpod_backend
+
+        try:
+            return runpod_backend.endpoint(version.base_model, ck.removeprefix("runpod://"),
+                                           int(s.get("lora_rank", 32)))
+        except runpod_backend.RunPodError as exc:
+            raise ServingError(str(exc)) from None
     if ck.startswith("fireworks-sampler://"):
         raise ServingError(f"{version.version} is a Fireworks training snapshot: OpenTrain evals answer from it, "
                            "but serving it to other apps needs a dedicated Fireworks deployment ($8/h and up, "

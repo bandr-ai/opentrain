@@ -244,6 +244,12 @@ def _modal(state: Path) -> TrainerBackend:
     return ModalBackend(state)
 
 
+def _runpod(state: Path) -> TrainerBackend:
+    from .runpod_backend import RunPodBackend
+
+    return RunPodBackend(state)
+
+
 def _fake(state: Path) -> TrainerBackend:
     from .fake import FakeBackend
 
@@ -253,6 +259,7 @@ def _fake(state: Path) -> TrainerBackend:
 BACKENDS: dict[str, Callable[[Path], TrainerBackend]] = {
     "tinker": _tinker,
     "modal": _modal,
+    "runpod": _runpod,
     "local": _local,
     "fireworks": _fireworks,
     "fake": _fake,

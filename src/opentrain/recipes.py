@@ -55,8 +55,10 @@ def teacher_for(base_model: str) -> str | None:
 def task_kind(grader: dict[str, Any] | None, references: list[str] | None = None) -> str:
     g = (grader or {}).get("type")
     refs = [r for r in (references or []) if r]
-    long_refs = bool(refs) and sorted(len(r) for r in refs)[len(refs) // 2] > 120
-    if g in ("number", "regex", "exact", "contains") and long_refs:
+    median = sorted(len(r) for r in refs)[len(refs) // 2] if refs else 0
+    # Working before a checked final answer: a number/regex check on long references (GSM8K-like),
+    # or an exact/contains check on very long ones.
+    if (g in ("number", "regex") and median > 40) or (g in ("exact", "contains") and median > 120):
         return "reason"
     if g in ("json", "number", "regex"):
         return "extract"
