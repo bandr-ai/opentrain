@@ -73,11 +73,29 @@ def _version(state: Path, version: str, messages, max_tokens, timeout, t0) -> Co
 
     try:
         v = Registry(state).get(version)
+    except RegistryError as exc:
+        raise CompletionError(str(exc)) from None
+    if v.checkpoint.startswith("fireworks-sampler://"):
+        return _fireworks(v, messages, max_tokens, timeout, t0)
+    try:
         ep = endpoint_for(v)
-    except (RegistryError, ServingError) as exc:
+    except ServingError as exc:
         raise CompletionError(str(exc)) from None
     modal = v.backend == "modal" or v.checkpoint.startswith("modal://")
     return _openai(ep, version, messages, max_tokens, timeout, t0, modal_base=v.base_model if modal else None)
+
+
+def _fireworks(v, messages, max_tokens, timeout, t0) -> Completion:
+    """A version trained on Fireworks serverless: answered from its sampler snapshot."""
+    from ..backends import fireworks
+
+    try:
+        text, p, c, cost = fireworks.sample(v.checkpoint, v.base_model, messages, max_tokens=max_tokens,
+                                            timeout=timeout)
+    except fireworks.FireworksError as exc:
+        raise CompletionError(str(exc)) from None
+    return Completion(text=THINK.sub("", text), seconds=time.time() - t0, cost=cost, input_tokens=p,
+                      output_tokens=c)
 
 
 def _modal(base: str, messages, max_tokens, timeout, t0) -> Completion:

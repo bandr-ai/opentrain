@@ -172,16 +172,19 @@ class JobStore:
                          detail=job.get("detail") or "", logs=self.logs(jid, tail=20),
                          loss=job.get("loss") if isinstance(job.get("loss"), (int, float)) else None)
 
-    def spawn(self, module: str, job_id: str) -> int:
+    def spawn(self, module: str, job_id: str, *, python: list[str] | None = None,
+              env: dict[str, str] | None = None) -> int:
         """Start ``python -m <module> <job.json>`` detached, so the job survives this process exiting.
 
-        The child inherits the environment (that is how ``TINKER_API_KEY`` reaches it); keys are
-        never written to the job file.
+        ``python`` replaces the interpreter (a backend whose SDK needs another Python passes a
+        ``uv run ... python`` prefix). The child inherits the environment plus ``env`` (that is how
+        API keys reach it); keys are never written to the job file.
         """
         log = self.log_path(job_id).open("a")
-        proc = subprocess.Popen([sys.executable, "-m", module, str(self.path(job_id))],
+        proc = subprocess.Popen([*(python or [sys.executable]), "-m", module, str(self.path(job_id))],
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                start_new_session=True, close_fds=True)
+                                start_new_session=True, close_fds=True,
+                                env={**os.environ, **env} if env else None)
         log.close()
         self.update(job_id, pid=proc.pid)
         return proc.pid
