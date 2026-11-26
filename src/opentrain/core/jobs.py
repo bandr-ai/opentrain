@@ -197,6 +197,9 @@ class Jobs:
                          error=None if st["state"] == "succeeded" else (st.get("detail") or st["state"]))
             if st.get("cancelled"):
                 patch["error"] = f"cancelled: {st['cancelled']}"
+            if st.get("why"):  # the server ended it (budget): say so, so nobody wonders who did
+                patch["error" if st["state"] != "succeeded" else "detail"] = (
+                    f"{st['why']}" + ("" if st["state"] != "succeeded" else f" · {st.get('detail') or ''}"))
         self.store.update("job", job_id, patch)
         if st["state"] in TERMINAL:
             v = st.get("version")

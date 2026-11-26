@@ -215,6 +215,9 @@ class Server:
         out: dict[str, Any] = {"state": st.state, "progress": st.progress, "cost_usd": st.cost_usd,
                                "detail": st.detail, "logs": st.logs[-10:], "loss": st.loss,
                                "reward": st.reward}
+        why = self._note(job_id, "cancel")
+        if why and st.done:
+            out["why"] = why  # why the server ended it, for the agent and the user
         limit = launched["estimate_usd"] + self.ledger.remaining(self.run.run_id)
         if not st.done and st.cost_usd > limit:
             backend = get_backend(launched["backend"], self.state)
@@ -222,10 +225,14 @@ class Server:
             # first ask the job to end at its next step and keep its adapter; cancel only if it runs on
             if asked is None and hasattr(backend, "stop_early") and backend.stop_early(job_id):
                 self._stop_asked(job_id, time.time())
+                self._note(job_id, "cancel", f"the server asked it to stop early: it cost ${st.cost_usd:.2f}, past "
+                                             f"what the budget had left for it (${limit:.2f})")
                 out["stopping"] = "over budget: ending at the next step, keeping the adapter trained so far"
             elif asked is None or time.time() - asked > 900 or st.cost_usd > limit * 1.25 + 0.25:
                 backend.cancel(job_id)
                 out["cancelled"] = "over budget"
+                self._note(job_id, "cancel", f"the server stopped it: it cost ${st.cost_usd:.2f}, past what the "
+                                             f"budget had left for it (${limit:.2f})")
         if st.done and not any(e["kind"] == "job" and e["data"].get("job_id") == job_id
                                and e["data"].get("state") in ("succeeded", "failed", "cancelled")
                                for e in self.run.events()):
@@ -240,6 +247,18 @@ class Server:
                 self.run.add("checkpoint", version=v.version, checkpoint=st.checkpoint)
                 out["version"] = v.version
         return out
+
+    def _note(self, job_id: str, kind: str, text: str | None = None) -> str | None:
+        """A short note kept beside a job (why the server stopped it)."""
+        p = self.state / "jobs" / f"{job_id}.{kind}-why"
+        if text is not None:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+            return text
+        try:
+            return p.read_text()
+        except OSError:
+            return None
 
     def _stop_asked(self, job_id: str, at: float | None = None) -> float | None:
         """When this job was asked to stop early (kept beside the job's own record)."""

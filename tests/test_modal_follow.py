@@ -120,3 +120,29 @@ def test_the_trainer_stops_when_asked():
     stop_now = _stopper(lambda: True, said.append)
     assert stop_now() and stop_now.fired and "saving the adapter" in said[0]
     assert not _stopper(lambda: 1 / 0, said.append)()  # a failed lookup is not a stop
+
+
+def test_the_reason_a_job_was_stopped_reaches_the_agent(tmp_path, monkeypatch):
+    from opentrain import mcp, trainfile
+    from opentrain.backends import JobStatus
+
+    state = tmp_path / ".opentrain"
+    state.mkdir()
+    srv = mcp.Server(state, "trainer", None, trainfile.parse("trainer  modal\nbudget  $2 a week"))
+    st = {"state": "running", "cost": 3.0}
+
+    class B:
+        def status(self, jid):
+            return JobStatus(job_id=jid, state=st["state"], progress=0.5, cost_usd=st["cost"])
+
+        def cancel(self, jid):
+            pass
+
+    monkeypatch.setattr(srv, "_job_event", lambda jid: {"backend": "x", "estimate_usd": 1.0, "reservation": "r"})
+    monkeypatch.setattr("opentrain.backends.get_backend", lambda name, s: B())
+    monkeypatch.setattr(srv.ledger, "remaining", lambda run_id=None: 0.0)
+    monkeypatch.setattr(srv.ledger, "settle", lambda rid, usd: None)
+    assert srv.t_train_status("j")["cancelled"] == "over budget"
+    st["state"] = "cancelled"
+    out = srv.t_train_status("j")
+    assert "budget had left" in out["why"] and "$3.00" in out["why"]
