@@ -120,8 +120,10 @@ class Jobs:
                 result, state, err = None, "failed", f"{type(exc).__name__}: {exc}"
             finally:
                 self.contexts.pop(job["id"], None)
+            cost = result.get("cost_usd") if isinstance(result, dict) else None
             self.store.update("job", job["id"], {"state": state, "result": _jsonable(result), "error": err,
                                                  "progress": 1.0 if state == "succeeded" else None,
+                                                 **({"cost_usd": cost} if isinstance(cost, (int, float)) else {}),
                                                  "time": {"ended": _now()}})
             summary = summarize(result) if (summarize and state == "succeeded") else None
             self._notify(job["id"], summary)
