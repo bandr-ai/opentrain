@@ -205,6 +205,28 @@ async def connect_integration(request: web.Request):
         raise ApiError(400, str(exc)) from None
 
 
+@routes.post("/api/integration/runpod/login")
+async def runpod_login_start(request: web.Request):
+    """Sign in to RunPod in the browser: the page opens ``url`` and polls the check route."""
+    from ..backends.runpod_backend import RunPodError, login_start
+
+    try:
+        return ok(await asyncio.to_thread(login_start))
+    except (RunPodError, OSError) as exc:
+        raise ApiError(502, f"RunPod: {exc}") from None
+
+
+@routes.get("/api/integration/runpod/login/{rid}")
+async def runpod_login_check(request: web.Request):
+    from ..backends.runpod_backend import RunPodError, login_check
+
+    try:
+        hint = await asyncio.to_thread(login_check, request.match_info["rid"])
+    except (RunPodError, OSError) as exc:
+        raise ApiError(400, str(exc)) from None
+    return ok({"connected": bool(hint), "hint": hint})
+
+
 @routes.delete("/api/integration/{iid}")
 async def disconnect_integration(request: web.Request):
     from ..core.integrations import disconnect

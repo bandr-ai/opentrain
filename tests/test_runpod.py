@@ -166,3 +166,19 @@ def test_qwen3_8b_distils_from_14b():
 
     assert teacher_for("Qwen/Qwen3-8B") == "Qwen/Qwen3-14B"
     assert loop_gpu("Qwen/Qwen3-8B", "opd", "Qwen/Qwen3-14B")[0] == "H200"
+
+
+def test_the_web_app_signs_in_to_runpod(live, monkeypatch):
+    from opentrain.backends import runpod_backend as rb
+    from opentrain.core import credentials
+
+    replies = iter([{"createFlashAuthRequest": {"id": "req1", "status": "PENDING"}},
+                    {"flashAuthRequestStatus": {"status": "PENDING"}},
+                    {"flashAuthRequestStatus": {"status": "APPROVED", "apiKey": "rpa_webkey123"}}])
+    monkeypatch.setattr(rb, "_graphql", lambda q, v=None: next(replies))
+    c = live.client(live.proj)
+    start = c.post("/api/integration/runpod/login")
+    assert start["request"] == "req1" and "flash/login?request=req1" in start["url"]
+    assert c.get("/api/integration/runpod/login/req1") == {"connected": False, "hint": None}
+    assert c.get("/api/integration/runpod/login/req1")["connected"]
+    assert credentials.get("runpod")["key"] == "rpa_webkey123"

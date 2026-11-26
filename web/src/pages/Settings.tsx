@@ -129,6 +129,26 @@ function Connections() {
       reloadStatus();
     } catch (e) { toastError(e); }
   };
+  const [signing, setSigning] = useState(false);
+  const signInRunPod = async () => {
+    // RunPod's own browser approval: open the console, then wait for the key to arrive
+    const tab = window.open("about:blank", "_blank");
+    try {
+      setSigning(true);
+      const start = await api.post<{ request: string; url: string }>("/api/integration/runpod/login");
+      if (tab) tab.location.href = start.url; else window.open(start.url, "_blank");
+      for (let i = 0; i < 300; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const st = await api.get<{ connected: boolean }>(`/api/integration/runpod/login/${start.request}`);
+        if (st.connected) {
+          toast("RunPod connected");
+          reload(); reloadModels(); reloadStatus();
+          return;
+        }
+      }
+      toast("RunPod sign-in timed out");
+    } catch (e) { tab?.close(); toastError(e); } finally { setSigning(false); }
+  };
   const disconnect = async (i: Integration) => {
     if (!confirm(`Remove the stored key for ${i.name}?`)) return;
     try { await api.del(`/api/integration/${i.id}`); reload(); reloadModels(); } catch (e) { toastError(e); }
@@ -147,8 +167,10 @@ function Connections() {
                 <td style={{ width: "40%" }}><b>{i.name}</b>{i.url && <> · <a href={i.url} target="_blank" rel="noreferrer" className="small">site</a></>}</td>
                 <td className="small">{i.connected ? <span className="badge good">{i.via === "connected" ? `key stored${i.hint ? ` (${i.hint})` : ""}` : i.via?.startsWith("$") ? `from ${i.via}` : "found"}</span> : <span className="faint">{i.env ? `set ${i.env} or add a key` : "not found"}</span>}</td>
                 <td className="num">
+                  {i.id === "runpod" && !i.connected && <button className="btn sm primary" disabled={signing} onClick={signInRunPod}
+                    style={{ marginRight: 6 }}>{signing ? "waiting for RunPod…" : "Sign in with RunPod"}</button>}
                   {i.env && (i.via === "connected" ? <button className="btn sm" onClick={() => disconnect(i)}>Remove</button>
-                    : <button className="btn sm" onClick={() => setConnecting(i)}>{i.connected ? "Replace key" : "Connect"}</button>)}
+                    : <button className="btn sm" onClick={() => setConnecting(i)}>{i.connected ? "Replace key" : i.id === "runpod" ? "Paste a key" : "Connect"}</button>)}
                 </td>
               </tr>
             )),

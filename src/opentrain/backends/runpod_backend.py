@@ -106,30 +106,43 @@ def _graphql(query: str, variables: dict | None = None) -> dict[str, Any]:
     return out.get("data") or {}
 
 
-def browser_login(*, open_browser: bool = True, timeout: float = 600, say=print) -> str:
-    """Sign in to RunPod in the browser, no key pasted: the same approval flow RunPod's own ``flash
-    login`` uses (an auth request, approved at console.runpod.io, that yields an API key). The key is
-    kept in OpenTrain's auth store. Returns a hint of the key."""
-    import webbrowser
-
-    from ..core import integrations
-
+def login_start() -> dict[str, str]:
+    """Start a browser sign-in (the approval flow RunPod's own ``flash login`` uses): returns the
+    request id and the console URL where the user approves it."""
     req = _graphql("mutation { createFlashAuthRequest { id status expiresAt } }").get("createFlashAuthRequest") or {}
     if not req.get("id"):
         raise RunPodError("RunPod did not start a sign-in request")
-    url = f"{CONSOLE}/flash/login?request={req['id']}"
-    say(f"Approve OpenTrain's access in your browser:\n  {url}")
-    if open_browser:
-        webbrowser.open(url)
-    end = time.time() + timeout
+    return {"request": req["id"], "url": f"{CONSOLE}/flash/login?request={req['id']}"}
+
+
+def login_check(request: str) -> str | None:
+    """``None`` while waiting; once approved, keeps the key in OpenTrain's auth store and returns a
+    hint of it. Raises when the request was denied or expired."""
+    from ..core import integrations
+
     q = "query($id: String!) { flashAuthRequestStatus(flashAuthRequestId: $id) { status apiKey } }"
+    st = _graphql(q, {"id": request}).get("flashAuthRequestStatus") or {}
+    if st.get("apiKey") and st.get("status") in ("APPROVED", "CONSUMED"):
+        integrations.connect("runpod", st["apiKey"])
+        return st["apiKey"][:6] + "…"
+    if st.get("status") in ("DENIED", "EXPIRED", "CONSUMED"):
+        raise RunPodError(f"RunPod sign-in {str(st['status']).lower()}")
+    return None
+
+
+def browser_login(*, open_browser: bool = True, timeout: float = 600, say=print) -> str:
+    """Sign in to RunPod in the browser, no key pasted. Returns a hint of the key."""
+    import webbrowser
+
+    start = login_start()
+    say(f"Approve OpenTrain's access in your browser:\n  {start['url']}")
+    if open_browser:
+        webbrowser.open(start["url"])
+    end = time.time() + timeout
     while time.time() < end:
-        st = _graphql(q, {"id": req["id"]}).get("flashAuthRequestStatus") or {}
-        if st.get("apiKey") and st.get("status") in ("APPROVED", "CONSUMED"):
-            integrations.connect("runpod", st["apiKey"])
-            return st["apiKey"][:6] + "…"
-        if st.get("status") in ("DENIED", "EXPIRED", "CONSUMED"):
-            raise RunPodError(f"RunPod sign-in {str(st['status']).lower()}")
+        hint = login_check(start["request"])
+        if hint:
+            return hint
         time.sleep(2)
     raise RunPodError("RunPod sign-in timed out")
 
