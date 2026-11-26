@@ -25,6 +25,7 @@ import json
 import random
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -206,6 +207,61 @@ def read_hf(dataset: str, *, split: str | None = None, config: str | None = None
         if len(got) < n or offset >= (page.get("num_rows_total") or 0):
             break
     return rows, {"hf": dataset, "config": s["config"], "split": s["split"]}
+
+
+KAGGLE = "https://www.kaggle.com/api/v1"
+TABULAR = (".csv", ".tsv", ".jsonl", ".ndjson", ".json")
+
+
+def kaggle_auth() -> dict[str, str]:
+    """Kaggle's API auth: a token (``KAGGLE_API_TOKEN``, Bearer) or ``KAGGLE_USERNAME`` + ``KAGGLE_KEY``
+    (Basic), as Kaggle's own client reads them. ``/connect kaggle`` stores ``username:key`` or a token."""
+    import base64
+    import os
+
+    token = os.environ.get("KAGGLE_API_TOKEN")
+    key = os.environ.get("KAGGLE_KEY") or ""
+    if not token and ":" in key and not os.environ.get("KAGGLE_USERNAME"):
+        user, key = key.split(":", 1)
+    else:
+        user = os.environ.get("KAGGLE_USERNAME") or ""
+    if token or (key and not user):
+        return {"Authorization": f"Bearer {token or key}"}
+    if user and key:
+        return {"Authorization": "Basic " + base64.b64encode(f"{user}:{key}".encode()).decode()}
+    raise DatasetError("Kaggle needs a key: /connect kaggle (username:key from kaggle.com/settings, or an API token)")
+
+
+def read_kaggle(dataset: str, *, file: str | None = None, limit: int = 2000,
+                fetch=None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Rows of a Kaggle dataset (``owner/name``): its zip is downloaded and one tabular file read (the
+    one named, else the largest CSV/JSON/JSONL)."""
+    import zipfile
+
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", dataset or ""):
+        raise DatasetError(f"{dataset!r} is not a Kaggle dataset id (owner/name)")
+    if fetch is None:
+        def fetch(url):
+            req = urllib.request.Request(url, headers={"User-Agent": "opentrain", **kaggle_auth()})
+            with urllib.request.urlopen(req, timeout=300) as r:  # noqa: S310 - fixed https host
+                return r.read()
+    try:
+        blob = fetch(f"{KAGGLE}/datasets/download/{dataset}")
+    except urllib.error.HTTPError as exc:
+        raise DatasetError(f"Kaggle refused {dataset}: HTTP {exc.code} (private, a competition, or a bad key)") from None
+    try:
+        z = zipfile.ZipFile(io.BytesIO(blob))
+    except zipfile.BadZipFile:
+        return parse_bytes(blob, file or "data.csv")[:limit], {"kaggle": dataset}
+    files = [i for i in z.infolist() if i.filename.lower().endswith(TABULAR)]
+    if file:
+        files = [i for i in files if i.filename == file or i.filename.endswith("/" + file)]
+    if not files:
+        names = ", ".join(i.filename for i in z.infolist()[:20])
+        raise DatasetError(f"no {'file ' + file if file else 'CSV/JSON/JSONL file'} in {dataset}; it has: {names}")
+    pick = max(files, key=lambda i: i.file_size)
+    rows = parse_bytes(z.read(pick), pick.filename)[:limit]
+    return rows, {"kaggle": dataset, "file": pick.filename}
 
 
 # ---------------------------------------------------------------------- the store

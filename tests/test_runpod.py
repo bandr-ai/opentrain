@@ -85,3 +85,27 @@ def test_recipes_pick_a_method_plan():
         recipe("answer", 100, "Qwen/Qwen3-1.7B", grader={"type": "judge"}, method="rl")
     with pytest.raises(ValueError, match="teacher"):
         recipe("label", 100, "Qwen/Qwen3-14B", method="opd")
+
+
+def test_kaggle_reads_the_largest_table_in_the_zip(monkeypatch):
+    import io
+    import zipfile
+
+    from opentrain.datasets import DatasetError, kaggle_auth, read_kaggle
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("readme.txt", "hi")
+        z.writestr("small.csv", "q,a\n1,2\n")
+        z.writestr("data/train.csv", "question,answer\n" + "".join(f"what is {i}+1,{i + 1}\n" for i in range(50)))
+    urls = []
+    rows, src = read_kaggle("someone/sums", fetch=lambda u: urls.append(u) or buf.getvalue(), limit=10)
+    assert urls == ["https://www.kaggle.com/api/v1/datasets/download/someone/sums"]
+    assert len(rows) == 10 and rows[0] == {"question": "what is 0+1", "answer": "1"} and src["file"] == "data/train.csv"
+    assert read_kaggle("someone/sums", file="small.csv", fetch=lambda u: buf.getvalue())[1]["file"] == "small.csv"
+    with pytest.raises(DatasetError):
+        read_kaggle("not a dataset id")
+    for k in ("KAGGLE_API_TOKEN", "KAGGLE_USERNAME"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("KAGGLE_KEY", "me:abc")
+    assert kaggle_auth()["Authorization"].startswith("Basic ")

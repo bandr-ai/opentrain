@@ -36,6 +36,7 @@ INTEGRATIONS: dict[str, tuple[str, str, str, str]] = {
     "modal": ("Modal (GPUs, your account)", "trainer", "MODAL_TOKEN_ID", "https://modal.com/settings/tokens"),
     "runpod": ("RunPod (GPU pods, your account)", "trainer", "RUNPOD_API_KEY", "https://console.runpod.io/user/settings"),
     "huggingface": ("Hugging Face", "trainer", "HF_TOKEN", "https://huggingface.co/settings/tokens"),
+    "kaggle": ("Kaggle (datasets)", "data", "KAGGLE_KEY", "https://www.kaggle.com/settings"),
     "prime": ("Prime Intellect", "trainer", "PRIME_API_KEY", "https://app.primeintellect.ai"),
 }
 

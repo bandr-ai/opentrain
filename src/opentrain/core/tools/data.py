@@ -93,11 +93,12 @@ def dataset_show(ctx: ToolContext, name: str, offset: int = 0, limit: int = 10) 
 async def dataset_import(ctx: ToolContext, name: str, path: str | None = None, hf: str | None = None,
                          split: str | None = None, config: str | None = None, limit: int = 2000,
                          input_key: str | None = None, output_key: str | None = None, description: str | None = None,
-                         system: str | None = None) -> Any:
-    from ...datasets import read_file, read_hf
+                         system: str | None = None, kaggle: str | None = None, file: str | None = None) -> Any:
+    from ...datasets import read_file, read_hf, read_kaggle
 
-    if bool(path) == bool(hf):
-        raise ToolError("give exactly one of path (a JSONL/JSON/CSV file) or hf (a Hugging Face dataset id)")
+    if sum(map(bool, (path, hf, kaggle))) != 1:
+        raise ToolError("give exactly one of path (a JSONL/JSON/CSV file), hf (a Hugging Face dataset id) or kaggle "
+                        "(a Kaggle dataset id, owner/name)")
     tf = _tf(ctx)
     if path:
         p = Path(path).expanduser()
@@ -107,6 +108,10 @@ async def dataset_import(ctx: ToolContext, name: str, path: str | None = None, h
         guard(ctx.project, p)
         raws = await asyncio.to_thread(_err(read_file), p)
         source = {"file": str(p)}
+    elif kaggle:
+        await ctx.ask("webfetch", [f"kaggle.com/datasets/{kaggle}"], metadata={"dataset": kaggle})
+        raws, source = await asyncio.to_thread(_err(read_kaggle), kaggle, file=file,
+                                               limit=max(1, min(int(limit), 50_000)))
     else:
         await ctx.ask("webfetch", [f"huggingface.co/datasets/{hf}"], metadata={"dataset": hf})
         raws, source = await asyncio.to_thread(_err(read_hf), hf, split=split, config=config,
@@ -370,10 +375,13 @@ def tools() -> list[Tool]:
           S({"name": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}, ["name"]),
           dataset_show),
         T("dataset_import", "Create or extend a dataset from a file (JSONL, JSON, CSV: chat 'messages', or "
-          "prompt/completion-like columns) or a public Hugging Face dataset. Rows are split train/held-out by the "
-          "Trainfile.",
+          "prompt/completion-like columns), a public Hugging Face dataset, or a Kaggle dataset. Rows are split "
+          "train/held-out by the Trainfile.",
           S({"name": {"type": "string", "description": "lowercase, e.g. support-replies"},
              "path": {"type": "string"}, "hf": {"type": "string", "description": "e.g. openai/gsm8k"},
+             "kaggle": {"type": "string", "description": "owner/name, e.g. uciml/sms-spam-collection-dataset"},
+             "file": {"type": "string", "description": "Kaggle: which file in the dataset (default: the largest "
+                                                       "CSV/JSON/JSONL)"},
              "split": {"type": "string"}, "config": {"type": "string"}, "limit": {"type": "integer"},
              "input_key": {"type": "string"}, "output_key": {"type": "string"},
              "description": {"type": "string"}, "system": {"type": "string"}}, ["name"]),
