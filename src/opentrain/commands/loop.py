@@ -56,7 +56,7 @@ def cmd_init(args) -> int:
     if path.exists() and not args.force:
         print(f"{path} exists; edit it, or pass --force to start over")
         return 1
-    path.write_text(trainfile.DEFAULT)
+    path.write_text(trainfile.default_text())
     ensure(root)
     print(f"Wrote       {path}")
     print("            goal speed, $20 a week, promote only if no held-out task regresses")

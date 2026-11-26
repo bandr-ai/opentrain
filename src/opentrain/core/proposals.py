@@ -2,7 +2,7 @@
 
 A proposal is how the engine asks for anything that costs money, sends data out, trains or changes
 what is live. It says what the step is, why, what it costs and how long it takes, and which gated
-actions it needs (``spend``, ``upload``, ``job.start``, ``promote``, ``serve``, ``webfetch``).
+actions it needs (``spend``, ``upload``, ``job.start``, ``promote``, ``serve``, ``webfetch``, ``download``).
 Approving it grants exactly those actions to the session for that step, so the user answers once
 instead of once per permission. The Trainfile budget is still enforced by the ledger, and a grant
 never covers ``shell``, ``edit`` or ``write``.
@@ -19,7 +19,7 @@ from typing import Any
 
 from .tool import ToolContext, ToolError
 
-GRANTABLE = ("spend", "upload", "job.start", "promote", "serve", "webfetch")
+GRANTABLE = ("spend", "upload", "job.start", "promote", "serve", "webfetch", "download")
 REPLIES = ("approve", "change", "skip")
 GRANT_SECONDS = 2 * 3600
 SPEND_SLACK = 1.5  # a granted step may spend up to 1.5x its estimate (+5 cents) before asking again

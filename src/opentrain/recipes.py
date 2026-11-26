@@ -42,6 +42,7 @@ GRADED_HERE = ("exact", "contains", "regex", "json", "number")
 TEACHERS = [
     (r"^Qwen/Qwen3\.5-(0\.8|2|4)B", "Qwen/Qwen3.5-9B"),
     (r"^Qwen/Qwen3-(0\.6|1\.7|4)B", "Qwen/Qwen3-8B"),
+    (r"^Qwen/Qwen3-8B$", "Qwen/Qwen3-14B"),  # 8B + 14B fit one H200
     (r"^Qwen/Qwen2\.5-(0\.5|1\.5|3)B-Instruct", "Qwen/Qwen2.5-7B-Instruct"),
     (r"^meta-llama/Llama-3\.2-(1|3)B-Instruct", "meta-llama/Llama-3.1-8B-Instruct"),
     (r"^google/gemma-3-(270m|1b)-it", "google/gemma-3-4b-it"),

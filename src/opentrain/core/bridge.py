@@ -27,10 +27,11 @@ PROTOCOL = "2025-06-18"
 INSTRUCTIONS = """OpenTrain post-trains models: it measures models on a dataset's sealed held-out rows,
 trains a small open model when that is worth it, and ships it only if it beats the baseline.
 
-Typical path: datasets / dataset_import -> dataset_edit (grader) -> dataset_eval a strong model and
-a small one (modal/<hf id> runs open models on the user's Modal account) -> dataset_recipe ->
-dataset_label (distil missing answers) -> dataset_train -> dataset_eval the new version ->
-dataset_promote. Jobs run on the OpenTrain server and return at once: wait for one with job_wait
+Typical path: datasets / dataset_import (a file, hf= or kaggle=) -> dataset_edit (grader; the import
+suggests one) -> dataset_eval a strong model and a small one (modal/<hf id> runs open models on the
+user's Modal account) -> trainer_set (where and what to train) -> dataset_recipe (settings, the plan
+of methods sft / rejection / opd / rl, and the cost) -> dataset_label (distil missing answers) ->
+dataset_train -> dataset_eval the new version -> dataset_promote. Jobs run on the OpenTrain server and return at once: wait for one with job_wait
 (it blocks until the job ends), or look with jobs / job_status. The user watches the same project in the OpenTrain web app (opentrain web).
 Ask the user before any call that spends money, uploads data, trains or changes what is live.
 The server enforces the budget and never lets anyone read held-out rows."""

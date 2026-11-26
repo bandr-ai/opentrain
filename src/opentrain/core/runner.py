@@ -122,7 +122,7 @@ class Runner:
         d = self.project.directory
         if trainfile.find(d) is None and (d / ".git").exists():
             try:
-                (d / "Trainfile").write_text(trainfile.DEFAULT)
+                (d / "Trainfile").write_text(trainfile.default_text())
                 self.store.publish("trainfile.created", {"path": str(d / "Trainfile")})
             except OSError:
                 pass

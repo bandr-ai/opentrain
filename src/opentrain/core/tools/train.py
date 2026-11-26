@@ -104,14 +104,16 @@ def _sandbox() -> str:
             "off": "OFF (OPENTRAIN_SANDBOX=off)", "none": "unavailable on this machine"}[kind()]
 
 
-def init(ctx: ToolContext, goal: str = "better than the current model on my held-out examples", budget: str = "$20 a week", trainer: str = "tinker",
+def init(ctx: ToolContext, goal: str = "better than the current model on my held-out examples", budget: str = "$20 a week", trainer: str | None = None,
          base_model: str = "Qwen/Qwen3-8B", heldout: str = "30%") -> ToolResult:
     from ... import trainfile
+
+    trainer = trainer or trainfile.ready_trainer()
 
     path = ctx.project.directory / "Trainfile"
     if path.exists():
         raise ToolError("a Trainfile already exists; edit it instead")
-    text = trainfile.DEFAULT
+    text = trainfile.default_text()
     for key, val in (("goal", goal), ("budget", f"{budget}, model tokens and compute together"),
                      ("trainer", trainer), ("base model", base_model), ("heldout", heldout)):
         lines = text.splitlines()
@@ -132,7 +134,7 @@ def goal_set(ctx: ToolContext, goal: str) -> ToolResult:
     if not goal:
         raise ToolError("say the goal in words")
     path = ctx.project.directory / "Trainfile"
-    text = path.read_text() if path.exists() else trainfile.DEFAULT
+    text = path.read_text() if path.exists() else trainfile.default_text()
     lines = text.splitlines()
     if any(ln.split("  ")[0].strip() == "goal" for ln in lines):
         text = "\n".join(f"{'goal':<12} {goal}" if ln.split("  ")[0].strip() == "goal" else ln for ln in lines) + "\n"
@@ -141,6 +143,26 @@ def goal_set(ctx: ToolContext, goal: str) -> ToolResult:
     trainfile.parse(text)
     path.write_text(text)
     return ToolResult(f"Goal set: {goal}", title="goal")
+
+
+def trainer_set(ctx: ToolContext, trainer: str | None = None, base_model: str | None = None) -> ToolResult:
+    """Only the trainer and base model lines: where to train and what to train. Budget and gate stay."""
+    from ... import trainfile
+    from ...backends import BACKENDS, get_backend
+
+    if not trainer and not base_model:
+        raise ToolError("give trainer, base_model or both")
+    said = []
+    if trainer:
+        if trainer not in BACKENDS or trainer == "fake":
+            raise ToolError(f"no trainer {trainer!r}; known: {', '.join(b for b in BACKENDS if b != 'fake')}")
+        trainfile.set_value(ctx.project.directory, "trainer", trainer)
+        ok, why = get_backend(trainer, ctx.project.state).available()
+        said.append(f"trainer {trainer}" + ("" if ok else f" (not ready here: {why})"))
+    if base_model:
+        trainfile.set_value(ctx.project.directory, "base model", " ".join(base_model.split()))
+        said.append(f"base model {base_model}")
+    return ToolResult("Set " + " and ".join(said) + ". dataset_recipe shows the new cost.", title="trainer")
 
 
 def backends(ctx: ToolContext) -> Any:
@@ -473,6 +495,10 @@ def tools() -> list[Tool]:
         T("goal_set", "Set the Trainfile's goal: what the model should get better at, in the user's words. Changes "
           "only the goal line; creates the Trainfile with defaults when there is none.",
           S({"goal": {"type": "string"}}, ["goal"]), goal_set, title=lambda a: a["goal"][:60]),
+        T("trainer_set", "Set where to train (trainer: modal, runpod, fireworks, tinker, local) and the base model "
+          "(a Hugging Face id, e.g. Qwen/Qwen3.5-4B). Changes only those Trainfile lines; budget and gate stay.",
+          S({"trainer": {"type": "string"}, "base_model": {"type": "string"}}), trainer_set,
+          title=lambda a: " ".join(x for x in (a.get("trainer"), a.get("base_model")) if x)),
         T("backends", "Trainer backends and whether each can run here.", S(), backends),
         T("record_query", "Past runs: triggers, data, recipes, spend, scores, gate decisions.",
           S({"run_id": {"type": "string"}, "last": {"type": "integer"}}), record_query),

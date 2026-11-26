@@ -45,6 +45,27 @@ eval cap     8 per run
 """
 
 
+def ready_trainer() -> str:
+    """The trainer a new project starts with: the first of Modal and RunPod that is set up here, else Tinker."""
+    try:
+        from .backends import missing_modules
+        from .backends.modal_backend import configured
+        from .backends.runpod_backend import api_key
+
+        if not missing_modules("modal") and configured()[0]:
+            return "modal"
+        if api_key():
+            return "runpod"
+    except Exception:  # noqa: BLE001 - a default must never fail
+        pass
+    return "tinker"
+
+
+def default_text() -> str:
+    """``DEFAULT`` with the trainer that can run here."""
+    return DEFAULT.replace("trainer      tinker", f"trainer      {ready_trainer()}")
+
+
 class TrainfileError(ValueError):
     pass
 
@@ -195,13 +216,13 @@ def find(start: Path | None = None) -> Path | None:
 def for_project(directory: Path) -> Trainfile:
     """The Trainfile governing ``directory``, or the defaults. Never looks at the process's cwd."""
     path = find(Path(directory))
-    return parse(path.read_text(), str(path)) if path else parse(DEFAULT)
+    return parse(path.read_text(), str(path)) if path else parse(default_text())
 
 
 def load(path: Path | None = None) -> Trainfile:
     path = path or find()
     if path is None:
-        return parse(DEFAULT)
+        return parse(default_text())
     return parse(path.read_text(), str(path))
 
 
@@ -213,7 +234,7 @@ def set_value(directory: Path, key: str, value: str) -> Path:
     if key not in KEYS:
         raise TrainfileError(f"unknown setting {key!r}")
     path = find(Path(directory)) or Path(directory) / "Trainfile"
-    text = path.read_text() if path.exists() else DEFAULT
+    text = path.read_text() if path.exists() else default_text()
     lines, done = text.splitlines(), False
     for i, line in enumerate(lines):
         stripped = line.strip()

@@ -13,7 +13,7 @@ unattended session (the watch loop, ``opentrain run --yes`` excluded) nobody can
 becomes deny unless the run was started with ``auto-approve`` for that action.
 
 Actions the harness uses: tool names (``shell``, ``read``, ``edit``, ``write``, ``webfetch``,
-...) plus ``spend`` (any cost: sampling, training), ``upload`` (data leaving the machine, the
+...) plus ``spend`` (any cost: sampling, training), ``download`` (a public dataset from Hugging Face or Kaggle), ``upload`` (data leaving the machine, the
 resource is the trainer), ``job.start``, ``job.stop``, ``promote``, ``serve``, ``export`` and
 ``heldout.read``. The budget itself is enforced by the ledger, never by a rule: an allowed
 ``spend`` still cannot exceed the Trainfile.

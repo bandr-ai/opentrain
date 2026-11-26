@@ -140,3 +140,29 @@ def test_browser_login_stores_the_approved_key(tmp_path, monkeypatch):
     said = []
     assert rb.browser_login(open_browser=False, say=said.append).startswith("rpa_ap")
     assert "console.runpod.io/flash/login?request=r1" in said[0] and rb.api_key() == "rpa_approved"
+
+
+def test_a_new_project_trains_where_it_can(monkeypatch, tmp_path):
+    """No Trainfile yet: the default trainer is one that is set up here, not Tinker regardless."""
+    from opentrain import trainfile
+    from opentrain.backends import modal_backend, runpod_backend
+
+    monkeypatch.setattr(modal_backend, "configured", lambda: (False, "no"))
+    monkeypatch.setattr(runpod_backend, "api_key", lambda: "")
+    assert trainfile.for_project(tmp_path).trainer == "tinker"
+    monkeypatch.setattr(runpod_backend, "api_key", lambda: "rk")
+    assert trainfile.for_project(tmp_path).trainer == "runpod"
+    monkeypatch.setattr(modal_backend, "configured", lambda: (True, "token"))
+    monkeypatch.setattr("opentrain.backends.missing_modules", lambda *m: [])
+    assert trainfile.for_project(tmp_path).trainer == "modal"
+    assert "trainer      modal" in trainfile.default_text()
+    (tmp_path / "Trainfile").write_text(trainfile.DEFAULT)
+    assert trainfile.for_project(tmp_path).trainer == "tinker"  # a written Trainfile is the user's choice
+
+
+def test_qwen3_8b_distils_from_14b():
+    from opentrain.recipes import teacher_for
+    from opentrain.backends.modal_backend import loop_gpu
+
+    assert teacher_for("Qwen/Qwen3-8B") == "Qwen/Qwen3-14B"
+    assert loop_gpu("Qwen/Qwen3-8B", "opd", "Qwen/Qwen3-14B")[0] == "H200"

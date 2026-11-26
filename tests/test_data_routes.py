@@ -180,3 +180,29 @@ def test_a_job_an_outside_agent_starts_wakes_no_model(live):
     assert any(m["role"] == "synthetic" for m in msgs)
     assert all(m["role"] != "assistant" or m.get("agent") == "outside" for m in msgs)
     assert not any(p["type"] == "text" for m in msgs if m["role"] == "assistant" for p in m["parts"])
+
+
+def test_an_outside_agent_imports_a_hugging_face_dataset(live, monkeypatch):
+    """Claude Code over MCP can pull GSM8K: a dataset download is not the general webfetch tool."""
+    import opentrain.datasets as ds
+
+    rows = [{"question": f"What is {i} + {i}?", "answer": f"{i} plus {i} is {2 * i}.\n#### {2 * i}"} for i in range(40)]
+    monkeypatch.setattr(ds, "read_hf", lambda *a, **k: (rows, {"hf": "openai/gsm8k", "rows": len(rows)}))
+    c = live.client(live.proj)
+    r = c.post("/api/outside/call", {"name": "dataset_import", "input": {
+        "name": "gsm8k", "hf": "openai/gsm8k", "input_key": "question", "output_key": "answer"}})
+    assert not r["is_error"], r["output"]
+    out = json.loads(r["output"])
+    assert out["added_train"] + out["added_heldout"] == 40
+    assert out["suggested_grader"]["type"] == "number" and "dataset_edit" in out["next"]
+    assert "webfetch" not in {t["name"] for t in c.get("/api/outside/tools")}
+
+
+def test_an_outside_agent_picks_the_trainer_and_model(live):
+    c = live.client(live.proj)
+    r = c.post("/api/outside/call", {"name": "trainer_set", "input": {"trainer": "modal", "base_model": "Qwen/Qwen3.5-4B"}})
+    assert not r["is_error"], r["output"]
+    text = (live.proj / "Trainfile").read_text()
+    assert "trainer      modal" in text and "base model   Qwen/Qwen3.5-4B" in text and "budget" in text
+    r = c.post("/api/outside/call", {"name": "trainer_set", "input": {"trainer": "fake"}})
+    assert r["is_error"]

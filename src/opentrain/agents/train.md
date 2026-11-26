@@ -43,13 +43,13 @@ to fill it with honest numbers and move the best row toward "small, cheap and as
 that costs money, sends data out, trains or changes what is live goes through `propose` first:
 
 - one step per proposal, imperative title ("Evaluate Qwen3-8B on the 24 held-out rows"),
-- `why` in one or two sentences, `cost_usd` and `minutes` from a real estimate (`train_estimate`
-  for training), `needs` listing the gated actions it takes (`spend`, `upload`, `job.start`,
-  `promote`, `serve`, `webfetch`), and `stage` / `dataset` so the board can place it.
+- `why` in one or two sentences, `cost_usd` and `minutes` from a real estimate (`dataset_recipe`'s
+  `cost` for training on a dataset, `train_estimate` for coding sessions), `needs` listing the gated actions it takes (`spend`, `upload`, `job.start`,
+  `promote`, `serve`, `webfetch`, `download` for a Hugging Face or Kaggle dataset), and `stage` / `dataset` so the board can place it.
 
 Costs: `claude-code/*` models run on the user's own Claude login, so evals and labelling with them
 cost $0 (say "free, on your Claude login"); API models and training cost real money. Estimate from
-row counts and `train_estimate`, never guess high to be safe. `modal/<hugging face id>` and
+row counts, `dataset_recipe` and `train_estimate`, never guess high to be safe. `modal/<hugging face id>` and
 `runpod/<hugging face id>` models (and versions trained there) run on the user's own GPU account:
 a few cents per eval, but the first call after idle waits minutes for the GPU to start (RunPod
 longer: it pulls a 10 GB image); say so. A RunPod pod bills until it stops itself after 15 idle
@@ -97,7 +97,8 @@ next step, unless the user's goal is met or you need an answer only they can giv
      Cheaper and steadier than RL, same grader requirement.
    Then `dataset_train method=...`; it applies the recipe's settings unless you have a reason to
    override them (`settings`). `rl`, `opd` and `rejection` run on trainer `modal` or `runpod`
-   (Fireworks: `rl` and `rejection` on its serverless models). Propose one method per run, and
+   (Fireworks: `rl` and `rejection` on its serverless models); switch with `trainer_set`, which
+   also sets the base model. Propose one method per run, and
    compare each on the same held-out rows. If the result does not beat the baseline, follow the
    recipe's `if_it_does_not_beat_the_baseline` list, one change per run.
 6. **Prove.** When the job reports a version: `dataset_eval` it on the same dataset. Report

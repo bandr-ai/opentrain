@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -109,11 +110,11 @@ async def dataset_import(ctx: ToolContext, name: str, path: str | None = None, h
         raws = await asyncio.to_thread(_err(read_file), p)
         source = {"file": str(p)}
     elif kaggle:
-        await ctx.ask("webfetch", [f"kaggle.com/datasets/{kaggle}"], metadata={"dataset": kaggle})
+        await ctx.ask("download", [f"kaggle.com/datasets/{kaggle}"], metadata={"dataset": kaggle})
         raws, source = await asyncio.to_thread(_err(read_kaggle), kaggle, file=file,
                                                limit=max(1, min(int(limit), 50_000)))
     else:
-        await ctx.ask("webfetch", [f"huggingface.co/datasets/{hf}"], metadata={"dataset": hf})
+        await ctx.ask("download", [f"huggingface.co/datasets/{hf}"], metadata={"dataset": hf})
         raws, source = await asyncio.to_thread(_err(read_hf), hf, split=split, config=config,
                                                limit=max(1, min(int(limit), 50_000)))
     if limit and len(raws) > int(limit):
@@ -122,8 +123,28 @@ async def dataset_import(ctx: ToolContext, name: str, path: str | None = None, h
                                 input_key=input_key, output_key=output_key, system=system,
                                 heldout=tf.heldout_fraction)
     sample_cols = sorted(raws[0].keys())[:20] if raws and isinstance(raws[0], dict) else []
-    return {**r, "columns_seen": sample_cols, "next": "dataset_show to check the rows, dataset_grader to say how "
-                                                      "answers are checked, then dataset_eval for a baseline"}
+    out = {**r, "columns_seen": sample_cols}
+    grader = _ds(ctx).meta(name).get("grader") or {}
+    if grader.get("type", "judge") == "judge" and len(grader) <= 1:  # still the default judge
+        hint = suggest_grader(_ds(ctx).rows(name))
+        if hint:
+            out["suggested_grader"] = hint
+    out["next"] = ("dataset_show to check the rows, dataset_edit with a grader to say how answers are checked "
+                   "(see suggested_grader), then dataset_eval for a baseline")
+    return out
+
+
+def suggest_grader(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """A check that fits the references, when one plainly does: final numbers (GSM8K's ``#### 72``)."""
+    from ...datasets import reference_of
+    from ...graders import _last_number
+
+    refs = [x for x in (reference_of(r) for r in rows[:200]) if x]
+    if len(refs) >= 5 and sum(_last_number(x) is not None for x in refs) >= 0.95 * len(refs):
+        tail = sum(bool(re.search(r"(####|\\boxed\{|answer is)\s*-?[\d$]", x, re.I)) for x in refs)
+        if tail >= 0.8 * len(refs) or max(map(len, refs)) <= 20:
+            return {"type": "number", "why": "every reference ends in a final number"}
+    return None
 
 
 def dataset_add(ctx: ToolContext, name: str, rows: list[dict[str, Any]], description: str | None = None,
@@ -331,7 +352,39 @@ def recipe_for(ctx: ToolContext, name: str, method: str | None = None) -> dict[s
 
 
 def dataset_recipe(ctx: ToolContext, name: str, method: str | None = None) -> Any:
-    return recipe_for(ctx, name, method)
+    r = recipe_for(ctx, name, method)
+    return {**r, "cost": recipe_cost(ctx, name, r)}
+
+
+def recipe_cost(ctx: ToolContext, name: str, r: dict[str, Any]) -> dict[str, Any]:
+    """What training with this recipe would cost on the Trainfile's trainer (nothing is uploaded)."""
+    import tempfile
+
+    from ...backends import get_backend
+    from ...plugs import TrainSpec
+
+    tf = _tf(ctx)
+    out: dict[str, Any] = {"trainer": tf.trainer, "base_model": tf.base_model}
+    backend = get_backend(tf.trainer, ctx.project.state)
+    ok, why = backend.available()
+    if not ok:
+        return {**out, "available": False, "detail": why}
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp) / "train.jsonl"
+        try:
+            _err(_ds(ctx).training_file)(name, data)
+            spec = TrainSpec(base_model=tf.base_model, data=data, method=r["method"], lora_rank=r["lora_rank"],
+                             epochs=r["epochs"], learning_rate=r["learning_rate"], batch_size=r["batch_size"],
+                             name="estimate", extra=r["extra"])
+            out["usd"] = round(backend.estimate(spec), 2)
+            if tf.trainer in ("modal", "runpod"):
+                from ...backends.modal_backend import _rows, gpu_seconds, loop_gpu
+
+                out["gpu"] = loop_gpu(spec.base_model, spec.method, spec.extra.get("teacher"))[0]
+                out["minutes"] = round(gpu_seconds(spec, _rows(data)) / 60 + (5 if tf.trainer == "runpod" else 0))
+        except (ToolError, ValueError, RuntimeError) as exc:
+            return {**out, "error": str(exc)}
+    return out
 
 
 def dataset_promote(ctx: ToolContext, version: str, baseline: str | None = None) -> Any:
@@ -363,7 +416,7 @@ def tools() -> list[Tool]:
     T = lambda *a, **k: Tool(*a, group="data", **k)  # noqa: E731
     obj = {"type": "object"}
     return [
-        T("dataset_recipe", "The tested training recipe for a dataset: task kind, the plan (which methods suit it, in "
+        T("dataset_recipe", "The tested training recipe for a dataset, with its cost on the Trainfile's trainer: task kind, the plan (which methods suit it, in "
           "order: sft, opd = on-policy distillation, rl = GRPO, rejection = rejection sampling), the settings for "
           "one method (default: the plan's first), what to do first and what to try if the run does not beat the "
           "baseline. dataset_train applies it; read it before proposing a training run.",
