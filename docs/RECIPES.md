@@ -56,3 +56,27 @@ Caveats, honestly: the dataset is small and synthetic, and easy for frontier mod
 the loop works and a 0.5B model can learn a narrow task cheaply, not that it beats a frontier model
 on real traffic. The serving cost is the GPU time each answer used at 8 concurrent requests; at real
 traffic, batched, it is much lower, and cold starts (about two minutes after idle) are not counted.
+
+### USMLE-style medical questions, from no data (2026-11-27)
+
+An end-to-end run through the agent (`opentrain run --yes`, a $3 Trainfile budget, trainer Modal,
+base model Qwen3.5-4B). Asked only "make this model better at USMLE-style multiple-choice questions",
+the agent searched Hugging Face and Kaggle, chose GBaker/MedQA-USMLE-4-options (CC-BY-4.0), imported
+400 rows with the options in the prompt and the letter as the answer (270 to train, 130 sealed), and
+evaluated on 100 held-out rows.
+
+| Model | Held-out (100 rows) | Training cost |
+| --- | --- | --- |
+| Qwen3.5-4B, untrained (Modal) | **76%** | — |
+| v1: SFT, rank 32, lr 1e-4, 3 epochs | 70% | $0.19 (4.7 min, L40S) |
+| v2: SFT, rank 32, lr 5e-5, 1 epoch | 75% (one row lost to a rollout 404, since fixed) | $0.07 (1.9 min) |
+
+Nothing was promoted. Training on letter-only answers teaches the format, which a 4B instruct
+model already has, and not the medicine; three epochs overfit and lost six points. The agent said
+so, stopped, and priced the next options (on-policy distillation from Qwen3.5-9B, about $2.40, or
+training on worked explanations instead of letters). Total spend: $0.32, evals included.
+
+The run also caught its own grader: a first regex accepted any option letter and scored the base
+model 100%; the agent noticed the score was implausible, wrote a `reward.py` that compares letters,
+and re-ran the baseline before training. (A regex with a capture group now compares what it
+captures with the reference.)
