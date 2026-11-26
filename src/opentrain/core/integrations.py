@@ -17,6 +17,7 @@ never written into a project or sent to a client.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ INTEGRATIONS: dict[str, tuple[str, str, str, str]] = {
     "groq": ("Groq", "provider", "GROQ_API_KEY", "https://console.groq.com/keys"),
     "fireworks": ("Fireworks", "provider", "FIREWORKS_API_KEY", "https://fireworks.ai/account/api-keys"),
     "tinker": ("Tinker (Thinking Machines)", "trainer", "TINKER_API_KEY", "https://tinker-console.thinkingmachines.ai"),
+    "modal": ("Modal (GPUs, your account)", "trainer", "MODAL_TOKEN_ID", "https://modal.com/settings/tokens"),
     "huggingface": ("Hugging Face", "trainer", "HF_TOKEN", "https://huggingface.co/settings/tokens"),
     "prime": ("Prime Intellect", "trainer", "PRIME_API_KEY", "https://app.primeintellect.ai"),
 }
@@ -46,6 +48,15 @@ BASE_MODELS: dict[str, list[dict[str, Any]]] = {
         {"id": "meta-llama/Llama-3.1-8B-Instruct", "params": "8B", "note": ""},
         {"id": "meta-llama/Llama-3.3-70B-Instruct", "params": "70B", "note": ""},
         {"id": "openai/gpt-oss-20b", "params": "20B MoE", "note": ""},
+    ],
+    "modal": [
+        {"id": "Qwen/Qwen2.5-0.5B-Instruct", "params": "0.5B", "note": "tiny: cheapest to train and serve"},
+        {"id": "Qwen/Qwen2.5-1.5B-Instruct", "params": "1.5B", "note": ""},
+        {"id": "Qwen/Qwen3-4B-Instruct-2507", "params": "4B", "note": "default: strong for its size, no thinking"},
+        {"id": "Qwen/Qwen3-8B", "params": "8B", "note": "thinks unless told not to"},
+        {"id": "meta-llama/Llama-3.2-3B-Instruct", "params": "3B", "note": "gated: /connect huggingface"},
+        {"id": "meta-llama/Llama-3.1-8B-Instruct", "params": "8B", "note": "gated: /connect huggingface"},
+        {"id": "Qwen/Qwen3-14B", "params": "14B", "note": "H100 to train"},
     ],
     "local": [
         {"id": "Qwen/Qwen3-0.6B", "params": "0.6B", "note": "runs on a laptop (MPS or CPU)"},
@@ -63,7 +74,7 @@ def load_into_env() -> list[str]:
     for iid, (_, _, var, _) in INTEGRATIONS.items():
         stored = credentials.get(iid)
         if stored and stored.get("key") and not os.environ.get(var):
-            os.environ[var] = stored["key"]
+            _export(iid, stored["key"])
             done.append(iid)
     return done
 
@@ -79,15 +90,27 @@ def connect(iid: str, key: str) -> dict[str, Any]:
     key = key.strip()
     if not key:
         raise ValueError("the key is empty")
+    if iid == "modal" and not re.fullmatch(r"ak-\S+[:\s]+as-\S+", key):
+        raise ValueError("paste the Modal token as token_id:token_secret (ak-...:as-...)")
     credentials.set_key(iid, key)
-    os.environ[INTEGRATIONS[iid][2]] = key
+    _export(iid, key)
     return status(iid)
+
+
+def _export(iid: str, key: str) -> None:
+    if iid == "modal":  # one stored value, two variables
+        tid, sec = re.split(r"[:\s]+", key, maxsplit=1)
+        os.environ["MODAL_TOKEN_ID"], os.environ["MODAL_TOKEN_SECRET"] = tid, sec
+    else:
+        os.environ[INTEGRATIONS[iid][2]] = key
 
 
 def disconnect(iid: str) -> bool:
     removed = credentials.remove(iid)
     if iid in INTEGRATIONS and removed:
         os.environ.pop(INTEGRATIONS[iid][2], None)
+        if iid == "modal":
+            os.environ.pop("MODAL_TOKEN_SECRET", None)
     return removed
 
 
@@ -112,7 +135,7 @@ def listing() -> list[dict[str, Any]]:
 def trainers(state: Path) -> list[dict[str, Any]]:
     from ..backends import list_backends
 
-    needs = {"tinker": "tinker", "fireworks": "fireworks"}
+    needs = {"tinker": "tinker", "fireworks": "fireworks", "modal": "modal"}
     return [{"name": n, "available": ok, "detail": why, "credential": needs.get(n),
              "base_models": BASE_MODELS.get(n, [])} for n, ok, why in list_backends(state)]
 

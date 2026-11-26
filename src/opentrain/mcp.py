@@ -218,8 +218,10 @@ class Server:
             self.run.add("spend", usd=st.cost_usd, what=f"training job {job_id}")
             self.run.add("job", job_id=job_id, backend=launched["backend"], state=st.state)
             if st.state == "succeeded" and st.checkpoint:
+                rank = int((launched.get("spec") or {}).get("lora_rank") or 32)
                 v = Registry(self.state).add(run_id=self.run.run_id, base_model=self.tf.base_model,
-                                             backend=launched["backend"], checkpoint=st.checkpoint)
+                                             backend=launched["backend"], checkpoint=st.checkpoint,
+                                             serving={"lora_rank": rank})
                 self.run.add("checkpoint", version=v.version, checkpoint=st.checkpoint)
                 out["version"] = v.version
         return out

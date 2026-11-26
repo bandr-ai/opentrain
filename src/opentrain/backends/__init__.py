@@ -227,6 +227,12 @@ def _fireworks(state: Path) -> TrainerBackend:
     return FireworksBackend(state)
 
 
+def _modal(state: Path) -> TrainerBackend:
+    from .modal_backend import ModalBackend
+
+    return ModalBackend(state)
+
+
 def _fake(state: Path) -> TrainerBackend:
     from .fake import FakeBackend
 
@@ -235,6 +241,7 @@ def _fake(state: Path) -> TrainerBackend:
 
 BACKENDS: dict[str, Callable[[Path], TrainerBackend]] = {
     "tinker": _tinker,
+    "modal": _modal,
     "local": _local,
     "fireworks": _fireworks,
     "fake": _fake,

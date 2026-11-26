@@ -5,7 +5,9 @@ A *target* is either
 - an engine model ref, ``provider/model`` (``anthropic/claude-opus-5-5``, ``claude-code/haiku``,
   ``openrouter/qwen/qwen3-8b``): the same providers the agent runs on, or
 - a model version from the registry, ``v3`` (or ``version:v3``): its OpenAI-compatible endpoint
-  (Tinker, Fireworks, a local vLLM/MLX server).
+  (Tinker, Modal, Fireworks, a local vLLM/MLX server), or
+- ``modal/<hugging face id>`` (``modal/Qwen/Qwen3-4B-Instruct-2507``): an open base model served on
+  the user's Modal account, so any open model can be measured before training it.
 
 Calls are synchronous and meant for worker threads (jobs). Claude Code runs ``claude -p`` with no
 tools and none of the user's settings, so it only answers.
@@ -60,6 +62,8 @@ def complete(target: str, messages: list[dict[str, str]], *, state: Path | None 
     provider = target.split("/", 1)[0]
     if provider == "claude-code":
         return _claude_code(target.split("/", 1)[1], messages, timeout, t0)
+    if provider == "modal":
+        return _modal(target.split("/", 1)[1], messages, max_tokens, timeout, t0)
     return _provider(target, messages, max_tokens, t0)
 
 
@@ -68,26 +72,66 @@ def _version(state: Path, version: str, messages, max_tokens, timeout, t0) -> Co
     from ..serving import ServingError, endpoint_for
 
     try:
-        ep = endpoint_for(Registry(state).get(version))
+        v = Registry(state).get(version)
+        ep = endpoint_for(v)
     except (RegistryError, ServingError) as exc:
         raise CompletionError(str(exc)) from None
+    modal = v.backend == "modal" or v.checkpoint.startswith("modal://")
+    return _openai(ep, version, messages, max_tokens, timeout, t0, modal_base=v.base_model if modal else None)
+
+
+def _modal(base: str, messages, max_tokens, timeout, t0) -> Completion:
+    """``modal/<hugging face id>``: an open model served on your Modal account (deployed on first use)."""
+    from ..backends import modal_backend
+
+    try:
+        ep = modal_backend.endpoint(base)
+    except modal_backend.ModalError as exc:
+        raise CompletionError(str(exc)) from None
+    return _openai(ep, f"modal/{base}", messages, max_tokens, timeout, t0, modal_base=base)
+
+
+THINK = re.compile(r"^\s*<think>.*?</think>\s*", re.S)
+
+
+def _openai(ep, label: str, messages, max_tokens, timeout, t0, modal_base: str | None = None) -> Completion:
     headers = {"Content-Type": "application/json"}
     if ep.api_key_env:
         key = os.environ.get(ep.api_key_env)
         if not key:
-            raise CompletionError(f"{version} is served by an endpoint that needs {ep.api_key_env}; /connect it")
+            raise CompletionError(f"{label} is served by an endpoint that needs {ep.api_key_env}; /connect it")
         headers["Authorization"] = f"Bearer {key}"
     body = {"model": ep.model, "messages": messages, "max_tokens": max_tokens, "temperature": 0}
+    if modal_base:
+        from ..backends import modal_backend
+
+        try:
+            modal_backend.wait_ready(ep)  # a scaled-to-zero endpoint starts on the first request
+        except modal_backend.ModalError as exc:
+            raise CompletionError(str(exc)) from None
+        t0 = time.time()  # the answer's time, not the cold start's
+        if "qwen3" in modal_base.lower() and "instruct" not in modal_base.lower():
+            body["chat_template_kwargs"] = {"enable_thinking": False}
     req = urllib.request.Request(f"{ep.base_url}/chat/completions", data=json.dumps(body).encode(), headers=headers)
+    cost_of = None
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
-            out = json.loads(r.read().decode())
+        if modal_base:
+            from ..backends import modal_backend
+
+            with modal_backend.answering(modal_base) as cost_of_answer:
+                with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+                    out = json.loads(r.read().decode())
+                cost_of = cost_of_answer()
+        else:
+            with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+                out = json.loads(r.read().decode())
     except Exception as exc:  # urllib raises several unrelated types
-        raise CompletionError(f"{version} did not answer: {exc}") from None
+        raise CompletionError(f"{label} did not answer: {exc}") from None
     u = out.get("usage") or {}
-    return Completion(text=(out.get("choices") or [{}])[0].get("message", {}).get("content") or "",
-                      seconds=time.time() - t0, input_tokens=u.get("prompt_tokens", 0) or 0,
-                      output_tokens=u.get("completion_tokens", 0) or 0)
+    text = (out.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+    return Completion(text=THINK.sub("", text), seconds=time.time() - t0, cost=cost_of or 0.0,
+                      input_tokens=u.get("prompt_tokens", 0) or 0, output_tokens=u.get("completion_tokens", 0) or 0,
+                      billing="modal-gpu" if modal_base else "api")
 
 
 def _flatten(messages: list[dict[str, str]]) -> tuple[str, str]:

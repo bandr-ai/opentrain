@@ -90,6 +90,14 @@ def endpoint_for(version: Version) -> Endpoint:
         from .backends import tinker
 
         return Endpoint(base_url=tinker.OPENAI_BASE, model=ck, api_key_env=tinker.KEY_ENV)
+    if version.backend == "modal" or ck.startswith("modal://"):
+        from .backends import modal_backend
+
+        try:
+            return modal_backend.endpoint(version.base_model, ck.removeprefix("modal://"),
+                                          int(s.get("lora_rank", 32)))
+        except modal_backend.ModalError as exc:
+            raise ServingError(str(exc)) from None
     if version.backend == "fireworks":
         return Endpoint(base_url=FIREWORKS_BASE, model=ck, api_key_env="FIREWORKS_API_KEY")
     if version.backend == "local":
