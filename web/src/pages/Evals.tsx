@@ -110,9 +110,8 @@ export function RunEvalModal({ dataset, onClose, model: initialModel }: { datase
     try {
       const name = ds || datasets?.[0]?.name;
       await api.post(`/api/dataset/${name}/eval`, { model: chosen, split, ...(limit ? { limit: Number(limit) } : {}) });
-      toast(`Evaluating ${chosen} on ${name}; it shows up in Jobs`);
+      toast(`evaluating ${chosen} on ${name}; the scoreboard updates when it finishes`);
       onClose();
-      go("jobs");
     } catch (e) { toastError(e); } finally { setBusy(false); }
   };
   return (
@@ -161,7 +160,7 @@ export function RunEvalModal({ dataset, onClose, model: initialModel }: { datase
 
 type EvalDetailT = EvalSummary & { rows: EvalRow[]; grader: any };
 
-function EvalDetail({ id }: { id: string }) {
+export function EvalDetail({ id }: { id: string }) {
   const { data, error } = useAsync(() => api.get<EvalDetailT>(`/api/eval/${id}`), [id]);
   const [show, setShow] = useState<"all" | "failed" | "passed">("all");
   const [open, setOpen] = useState<string | null>(null);

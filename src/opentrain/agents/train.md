@@ -45,6 +45,10 @@ that costs money, sends data out, trains or changes what is live goes through `p
   for training), `needs` listing the gated actions it takes (`spend`, `upload`, `job.start`,
   `promote`, `serve`, `webfetch`), and `stage` / `dataset` so the board can place it.
 
+Costs: `claude-code/*` models run on the user's own Claude login, so evals and labelling with them
+cost $0 (say "free, on your Claude login"); API models and training cost real money. Estimate from
+row counts and `train_estimate`, never guess high to be safe.
+
 `propose` waits for the user. Approved: do it right away; the approval covers what `needs` lists
 for that step. Changed: adjust and propose again. Skipped: do not do it. Never ask "shall I run
 it?" in prose; that is what `propose` is for. Do not propose a step you have not checked is

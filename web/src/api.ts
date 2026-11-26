@@ -195,6 +195,91 @@ export type Status = {
 
 // ------------------------------------------------------------------ live events
 
+export type Proposal = {
+  id: string;
+  session_id: string;
+  title: string;
+  why: string;
+  cost_usd: number;
+  minutes?: number | null;
+  needs: string[];
+  stage?: string | null;
+  dataset?: string | null;
+  status: string;
+  agent?: string;
+};
+
+export type StageKey = "goal" | "data" | "grade" | "baseline" | "train" | "prove" | "ship";
+export type Stage = { key: StageKey; label: string; state: "done" | "running" | "todo"; summary: string; current: boolean };
+
+export type ScoreRow = {
+  target: string;
+  kind: "model" | "version";
+  eval: string;
+  score: number;
+  pass_rate: number;
+  passed: number;
+  rows: number;
+  errors: number;
+  median_seconds?: number | null;
+  cost_usd: number;
+  cost_per_1k: number;
+  live: boolean;
+  time: number;
+};
+
+export type TrainRun = {
+  id: string;
+  title: string;
+  state: string;
+  progress?: number | null;
+  detail?: string;
+  cost_usd?: number;
+  estimate_usd?: number | null;
+  loss?: number | null;
+  curve?: [number, number][] | null;
+  version?: string | null;
+  error?: string | null;
+  backend?: string;
+  time?: { created?: number; started?: number; ended?: number };
+};
+
+export type Gate = {
+  promote: boolean;
+  reasons: string[];
+  rows?: number;
+  candidate?: string;
+  baseline?: string;
+  candidate_score?: number;
+  baseline_score?: number;
+  fixed?: string[];
+  regressed?: string[];
+};
+
+export type Board = {
+  project: { name: string; directory: string };
+  goal: string;
+  trainfile: boolean;
+  policy: { trainer: string; base_model: string };
+  budget: { spent_usd: number; remaining_usd: number; limit_usd: number; text: string };
+  datasets: DatasetSummary[];
+  dataset: string | null;
+  focus: DatasetSummary | null;
+  stages: Stage[];
+  current: StageKey;
+  scoreboard: ScoreRow[];
+  versions: { version: string; base_model: string; backend: string; decision: string; created_at: string; live: boolean }[];
+  live: { version: string | null; dataset: string | null };
+  training: TrainRun[];
+  gate: Gate | null;
+  running: { id: string; kind: string; title: string; progress?: number | null; detail?: string; dataset?: string; target?: string }[];
+  proposals: Proposal[];
+};
+
+export type GridCell = { passed: boolean; score: number; error?: string | null; answer?: string | null; reason?: string | null };
+export type GridRow = { id: string; cells: Record<string, GridCell>; disagree: boolean; prompt?: string; reference?: string | null };
+export type Grid = { dataset: string; columns: ScoreRow[]; rows: GridRow[]; revealed: boolean };
+
 export type ServerEvent = { type: string; data: any; time: number; seq?: number };
 type Listener = (e: ServerEvent) => void;
 
@@ -251,7 +336,7 @@ class EventHub {
   }
 }
 
-const KINDS = ["session", "message", "part", "inbox", "job", "todo", "approval", "question", "permission"];
+const KINDS = ["session", "message", "part", "inbox", "job", "todo", "approval", "question", "permission", "proposal"];
 const KNOWN_TYPES = [
   "server.connected",
   "part.delta",

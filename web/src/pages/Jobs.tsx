@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, Job } from "../api";
 import { go, useApp } from "../App";
 import { ago, dur, Empty, money, toastError } from "../ui";
-import { JobCard } from "./Chat";
+import { JobCard } from "./Agent";
 
 export default function Jobs({ id }: { id?: string }) {
   const { jobs } = useApp();
@@ -48,7 +48,7 @@ function result(j: Job) {
   return <span className="ok">done</span>;
 }
 
-function JobDetail({ id, job }: { id: string; job?: Job }) {
+export function JobDetail({ id, job }: { id: string; job?: Job }) {
   const [lines, setLines] = useState<string[]>([]);
   const [j, setJ] = useState<Job | undefined>(job);
   const pre = useRef<HTMLPreElement>(null);
@@ -75,7 +75,7 @@ function JobDetail({ id, job }: { id: string; job?: Job }) {
       <div className="page-head">
         <div className="grow"><div className="small muted"><a href="#/jobs">Jobs</a> /</div><h1>{j.title}</h1><p className="mono small">{j.id}</p></div>
         <div className="actions">
-          {j.session_id && <button className="btn" onClick={() => go("chat", j.session_id)}>Open conversation</button>}
+          {j.session_id && <button className="btn" onClick={() => go("chat", j.session_id!)}>open conversation</button>}
           {j.state === "running" && <button className="btn danger" onClick={() => api.post(`/api/job/${j.id}/cancel`).catch(toastError)}>Cancel</button>}
         </div>
       </div>

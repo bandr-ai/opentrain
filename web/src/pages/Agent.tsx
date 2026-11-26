@@ -1,11 +1,11 @@
 import { KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, events, Job, Message, Part, Permission, Question, Session } from "../api";
+import { api, events, Job, Message, Part, Permission, Proposal, Question, Session } from "../api";
 import { go, useApp } from "../App";
-import { dur, Icon, Markdown, money, Progress, toastError } from "../ui";
+import { ago, dur, Icon, Markdown, money, Progress, toastError } from "../ui";
 
-// ------------------------------------------------------------------ helpers
+// The agent sits beside the board: it does the work, proposes one step at a time, and you steer it.
 
-function merge<T extends Record<string, any>>(base: T, patch: Record<string, any>): T {
+export function merge<T extends Record<string, any>>(base: T, patch: Record<string, any>): T {
   const out: Record<string, any> = { ...base };
   for (const [k, v] of Object.entries(patch)) {
     if (v === null) delete out[k];
@@ -16,25 +16,9 @@ function merge<T extends Record<string, any>>(base: T, patch: Record<string, any
   return out as T;
 }
 
-const STARTERS = [
-  { title: "Fine-tune on my data", text: "I have a dataset of examples (I'll give you the file). Fine-tune a small open model on it and show me if it beats what I use today.", hint: "JSONL, CSV or JSON: prompts and answers" },
-  { title: "Distil a big model into a small one", text: "Distil a frontier model into a small open model for this task: ", hint: "a teacher writes the answers, a small model learns them" },
-  { title: "Compare models on my examples", text: "Compare a few models on my examples and tell me which is best and what it costs: ", hint: "a baseline eval; nothing is trained" },
-  { title: "Start from a public dataset", text: "Use the Hugging Face dataset openai/gsm8k: set it up with a number grader, get a baseline from a frontier model, and plan a fine-tune.", hint: "import, grade, baseline, plan" },
-  { title: "Build a dataset from a description", text: "Help me build a dataset for this from scratch, then train on it: ", hint: "we write and check the examples together" },
-  { title: "Train on my coding sessions", text: "Train a model on my Claude Code sessions in this repo so it does my routine coding work faster.", hint: "mines your agent sessions into verified tasks" },
-];
-
 type Command = { name: string; description: string };
 
-// ------------------------------------------------------------------ the page
-
-export default function Chat({ sid }: { sid?: string }) {
-  const isNew = !sid || sid === "new";
-  return isNew ? <Welcome /> : <Conversation key={sid} sid={sid!} />;
-}
-
-function useCommands() {
+export function useCommands() {
   const [cmds, setCmds] = useState<Command[]>([]);
   useEffect(() => {
     api.get<Command[]>("/api/command").then(setCmds).catch(() => {});
@@ -42,51 +26,7 @@ function useCommands() {
   return cmds;
 }
 
-function Welcome() {
-  const { reloadSessions, status } = useApp();
-  const [agent, setAgent] = useState("train");
-  const [model, setModel] = useState("");
-  const commands = useCommands();
-
-  const start = async (text: string) => {
-    const s = await api.post<Session>("/api/session", { agent, ...(model ? { model } : {}) });
-    await send(s.id, text, commands);
-    reloadSessions();
-    go("chat", s.id);
-  };
-
-  return (
-    <div className="chat">
-      <div className="scroll">
-        <div className="welcome">
-          <h1>What should your model get better at?</h1>
-          <p>Say it in your own words. Nothing is spent or uploaded without asking{status?.policy?.budget ? <> · budget {status.policy.budget}</> : null}.</p>
-          <Composer onSend={start} agent={agent} setAgent={setAgent} model={model} setModel={setModel}
-            autoFocus commands={commands} placeholder="e.g. a small model that sorts our support tickets, from tickets.csv" />
-          <div className="starters">
-            {STARTERS.map((s) => (
-              <button key={s.title} className="starter" onClick={() => {
-                const ta = document.querySelector<HTMLTextAreaElement>(".composer textarea");
-                if (ta) {
-                  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-                  setter.call(ta, s.text);
-                  ta.dispatchEvent(new Event("input", { bubbles: true }));
-                  ta.focus();
-                  ta.setSelectionRange(s.text.length, s.text.length);
-                }
-              }}>
-                <b>{s.title}</b>
-                <span>{s.hint}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-async function send(sid: string, text: string, commands: Command[]) {
+export async function send(sid: string, text: string, commands: Command[]) {
   const m = text.match(/^\/(\S+)\s*([\s\S]*)$/);
   if (m && commands.some((c) => c.name === m[1])) {
     await api.post(`/api/session/${sid}/command`, { name: m[1], arguments: m[2] });
@@ -95,36 +35,56 @@ async function send(sid: string, text: string, commands: Command[]) {
   }
 }
 
-function Conversation({ sid }: { sid: string }) {
-  const { busy, jobs, reloadSessions } = useApp();
+// ------------------------------------------------------------------ composer fill (starters, buttons)
+
+type Fill = (text: string, submit?: boolean) => void;
+let fillTarget: Fill | null = null;
+/** Put text in the agent's composer (and optionally send it). */
+export function fillComposer(text: string, submit = false) {
+  fillTarget?.(text, submit);
+}
+
+// ------------------------------------------------------------------ the panel
+
+export function AgentPanel() {
+  const { sid, setSid, sessions, busy, jobs, reloadSessions } = useApp();
   const [session, setSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [perms, setPerms] = useState<Permission[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [agent, setAgent] = useState("train");
+  const [proposals, setProposals] = useState<Proposal[]>([]);
   const [model, setModel] = useState("");
+  const [picking, setPicking] = useState(false);
   const commands = useCommands();
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
   const loadAsks = useCallback(() => {
+    if (!sid) {
+      setPerms([]); setQuestions([]); setProposals([]);
+      return;
+    }
     api.get<Permission[]>(`/api/permission?session=${sid}`).then(setPerms).catch(() => {});
     api.get<Question[]>(`/api/question?session=${sid}`).then(setQuestions).catch(() => {});
+    api.get<Proposal[]>(`/api/proposal?session=${sid}`).then(setProposals).catch(() => {});
   }, [sid]);
 
   useEffect(() => {
+    setSession(null);
+    setMessages([]);
+    stick.current = true;
+    if (!sid) return;
     api.get<Session>(`/api/session/${sid}`).then((s) => {
       setSession(s);
-      setAgent(s.agent || "train");
       setModel(typeof s.model === "string" ? s.model : "");
-    }).catch((e) => setLoadError(e.message));
+    }).catch(() => setSid(null));
     api.get<Message[]>(`/api/session/${sid}/message`).then(setMessages).catch(() => {});
     loadAsks();
-  }, [sid, loadAsks]);
+  }, [sid, loadAsks, setSid]);
 
   useEffect(() => events.on((e) => {
     const d = e.data || {};
+    if (!sid) return;
     if (d.session_id !== sid && !(e.type.startsWith("session.") && d.id === sid)) return;
     switch (e.type) {
       case "session.updated":
@@ -152,7 +112,7 @@ function Conversation({ sid }: { sid: string }) {
           : m)));
         break;
     }
-    if (e.type.startsWith("permission.") || e.type.startsWith("question.")) loadAsks();
+    if (e.type.startsWith("permission.") || e.type.startsWith("question.") || e.type.startsWith("proposal.")) loadAsks();
   }), [sid, loadAsks]);
 
   useLayoutEffect(() => {
@@ -160,63 +120,134 @@ function Conversation({ sid }: { sid: string }) {
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   });
 
-  const state = busy[sid] || (session as any)?.status || "idle";
-  const isBusy = state !== "idle";
-  const sessionJobs = useMemo(() => jobs.filter((j) => j.session_id === sid), [jobs, sid]);
+  const state = (sid && busy[sid]) || (session as any)?.status || "idle";
+  const isBusy = !!sid && state !== "idle";
   const jobById = useMemo(() => Object.fromEntries(jobs.map((j) => [j.id, j])), [jobs]);
   const shownJobs = new Set<string>();
+  const sessionJobs = jobs.filter((j) => j.session_id === sid && j.state === "running");
 
   const onSend = async (text: string) => {
-    try {
-      if (agent !== session?.agent || (model && model !== session?.model)) {
-        await api.patch(`/api/session/${sid}`, { agent, ...(model ? { model } : {}) });
-      }
-      stick.current = true;
-      await send(sid, text, commands);
-      reloadSessions();
-    } catch (e) {
-      toastError(e);
+    let id = sid;
+    if (!id) {
+      const s = await api.post<Session>("/api/session", model ? { model } : {});
+      id = s.id;
+      setSid(id);
+    } else if (model && model !== session?.model) {
+      await api.patch(`/api/session/${id}`, { model });
     }
+    stick.current = true;
+    await send(id, text, commands);
+    reloadSessions();
   };
 
-  if (loadError) return <div className="empty"><h2>Conversation not found</h2><p>{loadError}</p></div>;
+  const top = sessions.filter((s) => !s.parent_id);
 
   return (
-    <div className="chat">
-      <div className="chat-head">
-        <h2>{session?.title || "New conversation"}</h2>
-        <span className={`status-pill ${isBusy ? (state === "waiting" ? "waiting" : "busy") : ""}`}>
-          <i /> {state === "waiting" ? "needs you" : state === "idle" ? "idle" : "working"}
-        </span>
-        {isBusy && (
-          <button className="btn sm" onClick={() => api.post(`/api/session/${sid}/interrupt`).catch(toastError)}>
-            stop
-          </button>
-        )}
+    <aside className="agent">
+      <div className="agent-head">
+        <button className="agent-title" onClick={() => setPicking(!picking)} title="Switch conversation">
+          <span className={`dot ${isBusy ? (state === "waiting" ? "waiting" : "busy") : ""}`} />
+          <span className="t">{session?.title || (sid ? "…" : "new conversation")}</span>
+          <Icon name="down" />
+        </button>
+        {isBusy && <button className="btn sm ghost" onClick={() => api.post(`/api/session/${sid}/interrupt`).catch(toastError)}>stop</button>}
+        <button className="btn sm ghost" title="New conversation" onClick={() => { setSid(null); setPicking(false); }}><Icon name="plus" /></button>
       </div>
-      <div className="scroll" ref={scroller} onScroll={(e) => {
+      {picking && (
+        <div className="agent-sessions">
+          {top.length === 0 && <div className="faint small" style={{ padding: "6px 10px" }}>no conversations yet</div>}
+          {top.map((s) => (
+            <button key={s.id} className={s.id === sid ? "on" : ""} onClick={() => { setSid(s.id); setPicking(false); }}>
+              <span className={`dot ${busy[s.id] ? (busy[s.id] === "waiting" ? "waiting" : "busy") : ""}`} />
+              <span className="t">{s.title || "new conversation"}</span>
+              <span className="faint small">{ago(s.time?.updated ?? s.time?.created)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="agent-scroll" ref={scroller} onScroll={(e) => {
         const el = e.currentTarget;
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       }}>
-        <div className="convo">
-          {messages.map((m) => (
-            <MessageView key={m.id} m={m} jobById={jobById} shownJobs={shownJobs} />
-          ))}
-          {sessionJobs.filter((j) => j.state === "running" && !shownJobs.has(j.id)).map((j) => <JobCard key={j.id} job={j} />)}
-          {perms.map((p) => <PermissionAsk key={p.id} p={p} onDone={loadAsks} />)}
-          {questions.map((q) => <QuestionAsk key={q.id} q={q} onDone={loadAsks} />)}
+        <div className="agent-convo">
+          {!sid && <AgentHello />}
+          {messages.map((m) => <MessageView key={m.id} m={m} jobById={jobById} shownJobs={shownJobs} />)}
+          {sessionJobs.filter((j) => !shownJobs.has(j.id)).map((j) => <JobCard key={j.id} job={j} />)}
           {isBusy && state !== "waiting" && !messages.some((m) => m.role === "assistant" && !m.finish && m.parts.length) && (
             <div className="row faint small"><span className="dot busy" /> thinking…</div>
           )}
         </div>
       </div>
-      <div className="composer-wrap">
-        <Composer onSend={onSend} agent={agent} setAgent={setAgent} model={model} setModel={setModel}
-          busy={isBusy} commands={commands} placeholder={isBusy ? "steer while it works…" : "reply…"} autoFocus />
+      <div className="agent-foot">
+        {proposals.map((p) => <ProposalCard key={p.id} p={p} onDone={loadAsks} />)}
+        {perms.map((p) => <PermissionAsk key={p.id} p={p} onDone={loadAsks} />)}
+        {questions.map((q) => <QuestionAsk key={q.id} q={q} onDone={loadAsks} />)}
+        <Composer onSend={onSend} model={model} setModel={setModel} busy={isBusy} commands={commands}
+          placeholder={isBusy ? "steer while it works…" : sid ? "reply…" : "what should the model get better at?"} />
       </div>
+    </aside>
+  );
+}
+
+function AgentHello() {
+  return (
+    <div className="hello">
+      <p>Tell me what the model should get better at, in your own words. I'll find or build the data, decide how to grade answers, measure a baseline, train, and prove it on examples it never saw.</p>
+      <p className="faint">Anything that costs money or changes what's live comes to you as one step with its price. Nothing happens without your OK.</p>
     </div>
   );
 }
+
+// ------------------------------------------------------------------ the next step
+
+export function ProposalCard({ p, onDone, compact }: { p: Proposal; onDone?: () => void; compact?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [changing, setChanging] = useState(false);
+  const [text, setText] = useState("");
+  const reply = async (reply: "approve" | "change" | "skip", message?: string) => {
+    setBusy(true);
+    try {
+      await api.post(`/api/session/${p.session_id}/proposal/${p.id}/reply`, { reply, ...(message ? { message } : {}) });
+      onDone?.();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const cost = p.cost_usd ? `~${money(p.cost_usd)}` : "free";
+  return (
+    <div className={`next ${compact ? "compact" : ""}`}>
+      <div className="next-k">next step{p.stage ? ` · ${p.stage}` : ""}</div>
+      <div className="next-t">{p.title}</div>
+      {p.why && <div className="next-why">{p.why}</div>}
+      <div className="next-meta">
+        <span>{cost}</span>
+        {p.minutes ? <span>~{p.minutes < 1 ? "<1" : Math.round(p.minutes)} min</span> : null}
+        {p.needs.map((n) => <span key={n} className="need">{NEEDS[n] || n}</span>)}
+      </div>
+      {changing ? (
+        <div className="next-change">
+          <input className="input" autoFocus placeholder="what should be different?" value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) reply("change", text.trim()); if (e.key === "Escape") setChanging(false); }} />
+          <button className="btn sm primary" disabled={!text.trim() || busy} onClick={() => reply("change", text.trim())}>send</button>
+        </div>
+      ) : (
+        <div className="next-btns">
+          <button className="btn primary" disabled={busy} onClick={() => reply("approve")}>Approve{p.cost_usd ? ` · ${cost}` : ""}</button>
+          <button className="btn" disabled={busy} onClick={() => setChanging(true)}>Change</button>
+          <button className="btn ghost" disabled={busy} onClick={() => reply("skip")}>Skip</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const NEEDS: Record<string, string> = {
+  spend: "spends", upload: "uploads data", "job.start": "starts training", promote: "changes what's live",
+  serve: "serves a model", webfetch: "fetches from the web",
+};
 
 // ------------------------------------------------------------------ messages
 
@@ -236,6 +267,7 @@ function MessageView({ m, jobById, shownJobs }: { m: Message; jobById: Record<st
         if (p.type === "text") return p.text ? <Markdown key={p.id} text={p.text} /> : null;
         if (p.type === "reasoning") return p.text ? <Reasoning key={p.id} text={p.text} /> : null;
         if (p.type === "tool" && p.tool) {
+          if (p.tool.name === "propose") return <ProposalLine key={p.id} tool={p.tool} />;
           const jid = p.tool.metadata?.job_id;
           const job = jid ? jobById[jid] : undefined;
           if (job) shownJobs.add(job.id);
@@ -250,14 +282,26 @@ function MessageView({ m, jobById, shownJobs }: { m: Message; jobById: Record<st
       })}
       {(m.finish || m.error) && (
         <div className="msg-meta">
-          <span className="agent">{m.agent}</span>
-          {m.model && <span>{m.model}</span>}
           {took !== null && <span>{dur(took)}</span>}
           {m.cost ? <span>{money(m.cost)}{m.billing === "subscription" ? " (plan)" : ""}</span> : null}
           {m.finish === "interrupted" && <span className="badge warn">interrupted</span>}
           {m.error && m.finish !== "interrupted" && <span className="err">{m.error}</span>}
         </div>
       )}
+    </div>
+  );
+}
+
+function ProposalLine({ tool }: { tool: NonNullable<Part["tool"]> }) {
+  const i = tool.input || {};
+  const out = tool.state === "error" ? "skipped" : tool.state === "completed"
+    ? (tool.output || "").startsWith("Approved") ? "approved" : "changed" : "waiting for you";
+  const cls = out === "approved" ? "ok" : out === "skipped" ? "err" : out === "changed" ? "" : "warn";
+  return (
+    <div className="prop-line">
+      <span className="faint">proposed</span> <b>{i.title}</b>
+      {i.cost_usd ? <span className="faint"> · ~{money(i.cost_usd)}</span> : null}
+      <span className={`badge ${cls === "ok" ? "good" : cls === "err" ? "bad" : cls === "warn" ? "warn" : ""}`}>{out}</span>
     </div>
   );
 }
@@ -271,13 +315,13 @@ const TOOL_LABELS: Record<string, string> = {
   dataset_import: "import data", dataset_add: "add rows", dataset_show: "look at data", dataset_edit: "edit dataset",
   dataset_label: "label with a teacher", dataset_eval: "evaluate", dataset_train: "train", dataset_promote: "gate",
   model_try: "try a model", datasets: "datasets", evals: "evals", status: "status", question: "ask you",
-  train_estimate: "estimate cost", project_status: "status",
+  train_estimate: "estimate cost", goal_set: "set goal", shell: "shell", read: "read", write: "write", edit: "edit",
 };
 
 function summary(t: NonNullable<Part["tool"]>) {
   if (t.title) return t.title;
   const a = t.input || {};
-  for (const k of ["name", "model", "command", "path", "hf", "pattern", "url", "version", "job_id", "prompt"]) {
+  for (const k of ["name", "model", "command", "path", "hf", "pattern", "url", "version", "job_id", "prompt", "goal"]) {
     if (a[k]) return String(a[k]);
   }
   return "";
@@ -297,10 +341,9 @@ function ToolView({ tool }: { tool: NonNullable<Part["tool"]> }) {
         <span className={`tool-icon ${tool.state === "completed" ? "ok" : tool.state === "error" ? "bad" : ""}`}>
           {running ? <span className="spinner" /> : <Icon name={tool.state === "error" ? "x" : "check"} />}
         </span>
-        <span className="name">{TOOL_LABELS[tool.name] || tool.name}</span>
+        <span className="name">{TOOL_LABELS[tool.name] || tool.name.replace(/_/g, " ")}</span>
         <span className="sum">{summary(tool)}</span>
         {took !== null && <span className="t">{dur(took)}</span>}
-        <Icon name={open ? "down" : "chevron"} className="faint" />
       </div>
       {open && (
         <div className="tool-body">
@@ -311,7 +354,7 @@ function ToolView({ tool }: { tool: NonNullable<Part["tool"]> }) {
         </div>
       )}
       {!open && tool.state === "error" && tool.error && (
-        <div className="tool-body"><pre className="err">{tool.error.slice(0, 400)}</pre></div>
+        <div className="tool-body"><pre className="err">{tool.error.slice(0, 300)}</pre></div>
       )}
     </div>
   );
@@ -334,9 +377,9 @@ export function JobCard({ job }: { job: Job }) {
         <b className="grow">{job.title}</b>
         {started && <span className="faint small">{dur((ended || now) - started)}</span>}
         {job.state === "running" && (
-          <button className="btn ghost sm" onClick={() => api.post(`/api/job/${job.id}/cancel`).catch(toastError)}>Cancel</button>
+          <button className="btn ghost sm" onClick={() => api.post(`/api/job/${job.id}/cancel`).catch(toastError)}>cancel</button>
         )}
-        <button className="btn ghost sm" onClick={() => go("jobs", job.id)}>Log</button>
+        <button className="btn ghost sm" onClick={() => go("jobs", job.id)}>log</button>
       </div>
       {job.state === "running" && <Progress value={job.progress} />}
       <div className="small muted">
@@ -344,7 +387,6 @@ export function JobCard({ job }: { job: Job }) {
         {job.detail}
         {job.cost_usd ? ` · ${money(job.cost_usd)}` : ""}
         {job.estimate_usd ? ` of ~${money(job.estimate_usd)}` : ""}
-        {job.version && <> · <a href="#/models">{job.version}</a></>}
         {job.error && job.state !== "succeeded" && <span className="err"> {job.error}</span>}
       </div>
     </div>
@@ -359,7 +401,7 @@ function describe(p: Permission) {
   switch (p.action) {
     case "spend": return <>spend <b>{r}</b>{md.budget_remaining_usd !== undefined && <> (budget left {money(md.budget_remaining_usd)})</>}</>;
     case "upload": return <>upload <b>{md.what || "data"}</b> to <b>{r}</b></>;
-    case "job.start": return <>start a training job on <b>{r}</b>{md.base_model && <> with {md.base_model}</>}</>;
+    case "job.start": return <>start training on <b>{r}</b>{md.base_model && <> with {md.base_model}</>}</>;
     case "shell": return <>run <code>{md.command || r}</code></>;
     case "edit": case "write": return <>{p.action} <code>{r}</code></>;
     case "promote": return <>make <b>{r}</b> the live model</>;
@@ -382,12 +424,12 @@ function PermissionAsk({ p, onDone }: { p: Permission; onDone: () => void }) {
   };
   return (
     <div className="ask">
-      <h3>The {p.agent} agent wants to {describe(p)}</h3>
+      <h3>Wants to {describe(p)}</h3>
       {p.metadata?.command && p.action === "shell" && p.metadata.description && <div className="what muted">{p.metadata.description}</div>}
       <div className="row">
-        <button className="btn primary" disabled={busy} onClick={() => reply("once")}>Allow once</button>
-        {p.action !== "spend" && <button className="btn" disabled={busy} onClick={() => reply("always")}>Always allow</button>}
-        <button className="btn danger" disabled={busy} onClick={() => reply("reject")}>Reject</button>
+        <button className="btn primary sm" disabled={busy} onClick={() => reply("once")}>Allow</button>
+        {p.action !== "spend" && <button className="btn sm" disabled={busy} onClick={() => reply("always")}>Always</button>}
+        <button className="btn sm ghost" disabled={busy} onClick={() => reply("reject")}>Reject</button>
       </div>
     </div>
   );
@@ -420,13 +462,14 @@ function QuestionAsk({ q, onDone }: { q: Question; onDone: () => void }) {
               );
             })}
           </div>
-          <input className="input" placeholder="Or type your own answer" value={other[i]}
-            onChange={(e) => setOther((a) => a.map((x, j) => (j === i ? e.target.value : x)))} />
+          <input className="input" placeholder="or type your own answer" value={other[i]}
+            onChange={(e) => setOther((a) => a.map((x, j) => (j === i ? e.target.value : x)))}
+            onKeyDown={(e) => { if (e.key === "Enter" && ready) submit(); }} />
         </div>
       ))}
       <div className="row">
-        <button className="btn primary" disabled={!ready} onClick={() => submit()}>Answer</button>
-        <button className="btn ghost" onClick={() => submit(true)}>Dismiss</button>
+        <button className="btn primary sm" disabled={!ready} onClick={() => submit()}>Answer</button>
+        <button className="btn ghost sm" onClick={() => submit(true)}>Dismiss</button>
       </div>
     </div>
   );
@@ -434,9 +477,9 @@ function QuestionAsk({ q, onDone }: { q: Question; onDone: () => void }) {
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ onSend, agent, setAgent, model, setModel, busy, autoFocus, placeholder, commands }: {
-  onSend: (t: string) => Promise<void> | void; agent: string; setAgent: (a: string) => void; model: string;
-  setModel: (m: string) => void; busy?: boolean; autoFocus?: boolean; placeholder?: string; commands: Command[];
+function Composer({ onSend, model, setModel, busy, placeholder, commands }: {
+  onSend: (t: string) => Promise<void> | void; model: string; setModel: (m: string) => void; busy?: boolean;
+  placeholder?: string; commands: Command[];
 }) {
   const { models, defaultModel } = useApp();
   const [text, setText] = useState("");
@@ -448,13 +491,11 @@ function Composer({ onSend, agent, setAgent, model, setModel, busy, autoFocus, p
     const el = ta.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = Math.min(260, el.scrollHeight) + "px";
+    el.style.height = Math.min(220, el.scrollHeight) + "px";
   }, [text]);
 
-  const slash = text.startsWith("/") && !text.includes(" ") ? commands.filter((c) => c.name.startsWith(text.slice(1))) : [];
-
-  const submit = async () => {
-    const t = text.trim();
+  const submitText = async (raw: string) => {
+    const t = raw.trim();
     if (!t || sending) return;
     setSending(true);
     try {
@@ -466,6 +507,24 @@ function Composer({ onSend, agent, setAgent, model, setModel, busy, autoFocus, p
       setSending(false);
     }
   };
+
+  const latest = useRef(submitText);
+  latest.current = submitText;
+  useEffect(() => {
+    fillTarget = (t, submit) => {
+      if (submit) latest.current(t);
+      else {
+        setText(t);
+        requestAnimationFrame(() => {
+          ta.current?.focus();
+          ta.current?.setSelectionRange(t.length, t.length);
+        });
+      }
+    };
+    return () => { fillTarget = null; };
+  }, []);
+
+  const slash = text.startsWith("/") && !text.includes(" ") ? commands.filter((c) => c.name.startsWith(text.slice(1))) : [];
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (slash.length) {
@@ -479,7 +538,7 @@ function Composer({ onSend, agent, setAgent, model, setModel, busy, autoFocus, p
     }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      submit();
+      submitText(text);
     }
   };
 
@@ -502,16 +561,11 @@ function Composer({ onSend, agent, setAgent, model, setModel, busy, autoFocus, p
         </div>
       )}
       <div className="composer">
-        <textarea ref={ta} value={text} autoFocus={autoFocus} rows={1} placeholder={placeholder}
+        <textarea id="composer" ref={ta} value={text} rows={1} placeholder={placeholder}
           onChange={(e) => { setText(e.target.value); setPick(0); }} onKeyDown={onKey} />
         <div className="composer-bar">
-          <div className="seg" title="train acts (asking before it spends); plan only reads and estimates">
-            {["train", "plan"].map((a) => (
-              <button key={a} className={agent === a ? "on" : ""} onClick={() => setAgent(a)}>{a}</button>
-            ))}
-          </div>
           <select className="select" value={model} onChange={(e) => setModel(e.target.value)} title="The model the agent runs on">
-            <option value="">{defaultModel ? `default (${defaultModel})` : "default model"}</option>
+            <option value="">{defaultModel ? `${defaultModel}` : "default model"}</option>
             {Object.entries(groups).map(([g, ms]) => (
               <optgroup key={g} label={g}>
                 {ms.map((m) => <option key={m.ref} value={m.ref}>{m.name}</option>)}
@@ -519,12 +573,12 @@ function Composer({ onSend, agent, setAgent, model, setModel, busy, autoFocus, p
             ))}
           </select>
           <span className="grow" />
-          <button className="btn primary sm" onClick={submit} disabled={!text.trim() || sending} title={busy ? "Send now (steers the running turn)" : "Send"}>
+          <button className="btn primary sm" onClick={() => submitText(text)} disabled={!text.trim() || sending}
+            title={busy ? "Send now (steers the running turn)" : "Send"}>
             {sending ? <span className="spinner" /> : null} {busy ? "steer" : "send ↵"}
           </button>
         </div>
       </div>
-      <div className="composer-hint">enter send · shift+enter newline · / commands</div>
     </div>
   );
 }

@@ -1,87 +1,10 @@
 import { useState } from "react";
-import { api, EvalSummary, Session, Version } from "../api";
-import { go, useApp } from "../App";
-import { ago, dur, Empty, Icon, Modal, money, pct, toast, toastError, useAsync } from "../ui";
-import { RunEvalModal } from "./Evals";
+import { api, EvalSummary, Version } from "../api";
+import { useApp } from "../App";
+import { dur, Icon, Modal, money, pct, toast, toastError, useAsync } from "../ui";
 
-type Versions = { current: string | null; pinned: string | null; versions: Version[] };
 
-export default function Models() {
-  const { data, reload } = useAsync(() => api.get<Versions>("/api/version"), []);
-  const { status, reloadSessions } = useApp();
-  const [promote, setPromote] = useState<Version | null>(null);
-  const [evalFor, setEvalFor] = useState<Version | null>(null);
-
-  const train = async () => {
-    const s = await api.post<Session>("/api/session", { agent: "train" });
-    const ds = status?.datasets?.[0]?.name;
-    await api.post(`/api/session/${s.id}/prompt`, {
-      text: ds ? `Train a model on the dataset ${ds}. Show me the plan and cost first.` : "I want to train a model. Help me set up the data first.",
-    });
-    reloadSessions();
-    go("chat", s.id);
-  };
-
-  return (
-    <div className="page"><div className="page-inner">
-      <div className="page-head">
-        <div>
-          <h1>Models</h1>
-          <p>Trained versions. One goes live only when it beats the baseline on held-out rows.</p>
-        </div>
-        <div className="actions"><button className="btn primary" onClick={() => train().catch(toastError)}><Icon name="spark" /> Train a model</button></div>
-      </div>
-      <div className="stats">
-        <div className="stat"><b>{data?.current || "—"}</b><span>live version</span></div>
-        <div className="stat"><b style={{ fontSize: 15, paddingTop: 5 }} className="mono">{status?.policy?.base_model || "—"}</b><span>base model</span></div>
-        <div className="stat"><b style={{ fontSize: 15, paddingTop: 5 }}>{status?.policy?.trainer || "—"}</b><span>trainer · <a href="#/settings">change</a></span></div>
-        <div className="stat"><b>{data?.versions.length ?? 0}</b><span>versions</span></div>
-      </div>
-      <div className="card" style={{ marginBottom: 24 }}>
-        <div className="card-head"><h3>Versions</h3></div>
-        {!data?.versions.length ? (
-          <Empty title="Nothing trained yet" action={<button className="btn primary" onClick={() => train().catch(toastError)}><Icon name="spark" /> Train a model</button>}>
-            Training starts from a dataset with answers. The agent shows the plan and cost and asks you before anything is uploaded or spent.
-          </Empty>
-        ) : (
-          <table className="table">
-            <thead><tr><th>Version</th><th>Base model</th><th>Trained on</th><th>Trainer</th><th>Gate</th><th>Created</th><th /></tr></thead>
-            <tbody>
-              {data.versions.map((v) => (
-                <tr key={v.version}>
-                  <td><b className="mono">{v.version}</b>{v.version === data.current && <span className="badge good" style={{ marginLeft: 6 }}>live</span>}</td>
-                  <td className="mono small">{v.base_model}</td>
-                  <td>{v.dataset ? <a className="mono" href={`#/data/${v.dataset}`}>{v.dataset}</a> : <span className="muted">coding tasks</span>}</td>
-                  <td>{v.backend}</td>
-                  <td className="small">{gateBadge(v.decision)}</td>
-                  <td className="muted">{ago(v.created_at)}</td>
-                  <td className="num">
-                    <div className="row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                      {v.dataset && <button className="btn sm" onClick={() => setEvalFor(v)}>Evaluate</button>}
-                      {v.dataset && v.version !== data.current && <button className="btn sm primary" onClick={() => setPromote(v)}>Gate</button>}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-      <Playground versions={data?.versions || []} />
-      {promote && <PromoteModal v={promote} current={data?.current || null} onClose={() => setPromote(null)} onDone={() => { setPromote(null); reload(); }} />}
-      {evalFor && <RunEvalModal dataset={evalFor.dataset || undefined} model={evalFor.version} onClose={() => setEvalFor(null)} />}
-    </div></div>
-  );
-}
-
-function gateBadge(d: string) {
-  if (d === "promoted") return <span className="badge good">promoted</span>;
-  if (d === "reverted") return <span className="badge">reverted</span>;
-  if (d.startsWith("rejected")) return <span className="badge bad" title={d}>rejected</span>;
-  return <span className="badge">{d || "proposed"}</span>;
-}
-
-function PromoteModal({ v, current, onClose, onDone }: { v: Version; current: string | null; onClose: () => void; onDone: () => void }) {
+export function PromoteModal({ v, current, onClose, onDone }: { v: Version; current: string | null; onClose: () => void; onDone: () => void }) {
   const { data: evals } = useAsync(() => api.get<EvalSummary[]>(`/api/eval?dataset=${v.dataset}`), [v.dataset]);
   const targets = [...new Set((evals || []).filter((e) => e.split === "heldout" && e.target !== v.version).map((e) => e.target))];
   const [base, setBase] = useState(current && current !== v.version ? current : "");
@@ -138,7 +61,7 @@ function PromoteModal({ v, current, onClose, onDone }: { v: Version; current: st
 
 type Answer = { model: string; answer?: string; error?: string; seconds?: number; cost_usd?: number; busy?: boolean };
 
-function Playground({ versions }: { versions: Version[] }) {
+export function Playground({ versions }: { versions: Version[] }) {
   const { models, defaultModel } = useApp();
   const [picks, setPicks] = useState<string[]>(["", ""]);
   const [prompt, setPrompt] = useState("");

@@ -4,8 +4,9 @@
 
 You tell an agent what a model should get better at, in your own words. It gets the data, decides
 how answers are graded, measures a baseline, trains, and ships a new version only when it beats the
-current one on examples it has never seen. It asks before it spends money, uploads data or changes
-what is live.
+current one on examples it has never seen. There are no modes to pick: one agent works through the
+loop, and anything that costs money, sends data out, trains or changes what is live comes to you as
+one proposed step, with its price, to approve, change or skip.
 
 ```
 $ opentrain web        # the web app (or: opentrain, for the terminal app)
@@ -42,7 +43,7 @@ The same shape as opencode: one server per user, and every front end is a client
                      HTTP /api  +  SSE /api/event
             ┌──────────────────────┴──────────────────────┐
             │  server: projects, sessions, event log      │
-            │  engine: the agent loop (train, plan, ...)  │
+            │  engine: the agent loop and its tools       │
             │  tools ── permissions ── budget ── jobs     │
             │  evaluator (own process) ── gate ── registry│
             └──────┬──────────────┬──────────────┬────────┘
@@ -64,26 +65,40 @@ The same shape as opencode: one server per user, and every front end is a client
 ## The web app
 
 `opentrain web` opens it in your browser (a one-time sign-in link; it talks to your local server).
+It is one screen per project, built around the loop:
 
-| Page | What it is for |
-| --- | --- |
-| Chat | the agent: say what you want; tool calls, jobs and approvals appear inline |
-| Data | datasets: upload, Hugging Face, or written with the agent; rows, grader, system prompt |
-| Evals | run any model on held-out rows; a leaderboard per dataset; every row's result |
-| Models | trained versions, the gate, and a playground to compare answers side by side |
-| Jobs | evals, labelling and training as they run, with logs |
-| Settings | the Trainfile, trainer and base model, the engine model, keys, saved approvals |
+```
+ goal → data → grade → baseline → train → prove → ship          budget  $0.42 / $20 a week
+┌───────────────────────────────────────────────────────┬──────────────────────────────┐
+│ the stage you are on: its evidence and its actions    │ the agent                    │
+│  · baseline: the scoreboard, every model on the same  │  what it did, in a few lines │
+│    held-out rows (score, cost per 1k, latency)        │ ┌──────────────────────────┐ │
+│  · train: runs with their loss curve and cost         │ │ next step · prove        │ │
+│  · prove: the new version against the baseline,       │ │ Evaluate v2 on the 24    │ │
+│    rows fixed and rows broken                         │ │ held-out rows  ~$0.01    │ │
+│  · ship: what is live, the gate, a playground         │ │ [Approve] [Change] [Skip]│ │
+│                                                       │ └──────────────────────────┘ │
+└───────────────────────────────────────────────────────┴──────────────────────────────┘
+```
+
+- **The strip is the navigation.** Each stage shows its state (done, running, next) in one line;
+  keys 1–7 jump to them. A red dot marks the stage a proposed step belongs to.
+- **The middle is the evidence.** Every number opens the rows behind it: `every row →` is the grid
+  of held-out rows against every model, with each answer and the grader's reason. Held-out rows
+  are sealed from the agent and from training; you can read them, the agent never can.
+- **The agent works beside it.** It proposes one step at a time with its cost and time; approving
+  covers exactly the gated actions that step needs, so you answer once, not once per permission.
+- **Drop a file anywhere** to make a dataset.
 
 The app is built from `web/` (Vite + React) into the package, so using it needs no Node:
 `cd web && pnpm install && pnpm build` after changing it, `pnpm dev` to work on it against a
-running server.
+running server (`OPENTRAIN_URL` picks which).
 
 ## Agents
 
 | Agent | Can |
 | --- | --- |
-| `train` (default) | starts from what you ask; data, grading, evals, training and the gate, asking before shell commands, edits, spending, uploading, launching, promoting and serving |
-| `plan` (tab) | read, scan sessions, estimate cost; never spends, trains or changes files (except plans) |
+| `train` (the one you talk to) | starts from what you ask; data, grading, evals, training and the gate. Proposes each costly or risky step (`propose`) and asks before shell commands and edits |
 | `data` (subagent) | import, write and clean dataset rows, propose graders; mine and repair coding tasks |
 | `monitor` (subagent) | look at jobs, read-only |
 | `evaluator` (hidden) | the only reader of held-out tasks; runs in its own process |
@@ -142,9 +157,9 @@ eval cap     8 per run
 | `opentrain model serve` | a trained version as an OpenAI-compatible endpoint |
 | `opentrain debug ...` | every pipeline step on its own (bench, mine, sample, eval, ...) |
 
-In the terminal app: **enter** send · **ctrl+j** new line · **tab** train ⇄ plan · **esc** interrupt ·
+In the terminal app: **enter** send · **ctrl+j** new line · **esc** interrupt ·
 **ctrl+p** commands · **ctrl+o** models · **ctrl+l** sessions · **ctrl+b** sidebar. Slash commands:
-`/train` `/status` `/mine` `/fix <what is wrong>` `/eval <version>` `/plan` `/export`, and
+`/train` `/status` `/data` `/mine` `/fix <what is wrong>` `/eval <version>` `/export`, and
 `/models` `/connect` `/trainer` `/agents` `/sessions` `/jobs` `/versions` `/help`. Add your own as
 Markdown in `.opentrain/commands/`.
 

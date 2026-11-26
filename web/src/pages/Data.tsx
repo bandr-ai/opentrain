@@ -1,59 +1,9 @@
+import { fillComposer } from "./Agent";
 import { useEffect, useState } from "react";
-import { api, DatasetSummary, EvalSummary, Row, Session } from "../api";
+import { api, DatasetSummary, EvalSummary, Row } from "../api";
 import { go, useApp } from "../App";
 import { ago, Empty, Icon, Modal, pct, toast, toastError, useAsync } from "../ui";
 import { RunEvalModal } from "./Evals";
-
-export default function Data({ name }: { name?: string }) {
-  return name ? <Dataset key={name} name={name} /> : <DatasetList />;
-}
-
-// ------------------------------------------------------------------ list
-
-function DatasetList() {
-  const { data, loading, reload } = useAsync(() => api.get<DatasetSummary[]>("/api/dataset"), []);
-  const [creating, setCreating] = useState(false);
-  return (
-    <div className="page"><div className="page-inner">
-      <div className="page-head">
-        <div>
-          <h1>Data</h1>
-          <p>Examples of what the model should do. A share of each is held out and sealed from training.</p>
-        </div>
-        <div className="actions"><button className="btn primary" onClick={() => setCreating(true)}><Icon name="plus" /> New dataset</button></div>
-      </div>
-      {loading && !data ? <div className="row muted"><span className="spinner" /> Loading…</div> : data && data.length === 0 ? (
-        <div className="card"><Empty title="No datasets yet" action={<button className="btn primary" onClick={() => setCreating(true)}><Icon name="plus" /> New dataset</button>}>
-          Upload a file of examples, pull a public dataset from Hugging Face, or describe what you want and let the agent write the examples with you.
-        </Empty></div>
-      ) : (
-        <div className="cards">
-          {data?.map((d) => <DatasetCard key={d.name} d={d} />)}
-        </div>
-      )}
-      {creating && <NewDataset onClose={() => setCreating(false)} onCreated={(n) => { setCreating(false); reload(); go("data", n); }} />}
-    </div></div>
-  );
-}
-
-function DatasetCard({ d }: { d: DatasetSummary }) {
-  const best = Object.entries(d.latest_scores || {}).sort((a, b) => b[1].score - a[1].score)[0];
-  return (
-    <div className="card dcard" onClick={() => go("data", d.name)}>
-      <div className="row"><h3 className="grow">{d.name}</h3><span className="badge">{d.grader}</span></div>
-      {d.description && <p>{d.description}</p>}
-      <div className="nums">
-        <span><b>{d.counts.train}</b> train</span>
-        <span><b>{d.counts.heldout}</b> held out</span>
-        <span><b>{d.counts.labelled}</b> with answers</span>
-      </div>
-      {best ? <div className="small muted">Best: <span className="mono">{best[0]}</span> <b className="ok">{pct(best[1].score)}</b></div>
-        : <div className="small faint">No evals yet</div>}
-    </div>
-  );
-}
-
-// ------------------------------------------------------------------ create
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
@@ -61,11 +11,13 @@ function slug(s: string) {
   return s.toLowerCase().replace(/\.[a-z]+$/, "").replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
 }
 
-export function NewDataset({ onClose, onCreated, initialName }: { onClose: () => void; onCreated: (n: string) => void; initialName?: string }) {
-  const [tab, setTab] = useState<"file" | "hf" | "agent">("file");
-  const [name, setName] = useState(initialName || "");
+export function NewDataset({ onClose, onCreated, initialName, tab: initialTab, file: initialFile }: {
+  onClose: () => void; onCreated: (n: string) => void; initialName?: string; tab?: "file" | "hf" | "agent"; file?: File | null;
+}) {
+  const [tab, setTab] = useState<"file" | "hf" | "agent">(initialTab || "file");
+  const [name, setName] = useState(initialName || (initialFile ? slug(initialFile.name) : ""));
   const [description, setDescription] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFile] = useState<File | null>(initialFile || null);
   const [over, setOver] = useState(false);
   const [hf, setHf] = useState("");
   const [split, setSplit] = useState("");
@@ -75,7 +27,7 @@ export function NewDataset({ onClose, onCreated, initialName }: { onClose: () =>
   const [outputKey, setOutputKey] = useState("");
   const [goal, setGoal] = useState("");
   const [busy, setBusy] = useState(false);
-  const { reloadSessions, reloadStatus } = useApp();
+  const { reloadStatus, reloadBoard } = useApp();
   const extending = !!initialName;
 
   const pickFile = (f: File | null) => {
@@ -89,13 +41,8 @@ export function NewDataset({ onClose, onCreated, initialName }: { onClose: () =>
     setBusy(true);
     try {
       if (tab === "agent") {
-        const s = await api.post<Session>("/api/session", { agent: "train" });
-        await api.post(`/api/session/${s.id}/prompt`, {
-          text: `Build a dataset named "${name}" for this, writing varied, realistic examples with reference answers (start with about 40, ask me if anything is unclear), then propose how answers should be graded and set it:\n\n${goal}`,
-        });
-        reloadSessions();
+        fillComposer(`Build a dataset named "${name}" for this, writing varied, realistic examples with reference answers (start with about 40, ask me if anything is unclear), then propose how answers should be graded and set it:\n\n${goal}`, true);
         onClose();
-        go("chat", s.id);
         return;
       }
       let r: any;
@@ -109,6 +56,7 @@ export function NewDataset({ onClose, onCreated, initialName }: { onClose: () =>
       const notes = [r.duplicates ? `${r.duplicates} duplicates skipped` : "", r.skipped ? `${r.skipped} unreadable rows skipped (${r.errors?.[0] ?? ""})` : ""].filter(Boolean).join("; ");
       toast(`${r.added_train} training and ${r.added_heldout} held-out rows added${notes ? `. ${notes}` : ""}`);
       reloadStatus();
+      reloadBoard();
       onCreated(name);
     } catch (e) {
       toastError(e);
@@ -199,7 +147,7 @@ const GRADERS = [
   { type: "command", label: "Script", help: "Your script reads {prompt, answer, reference} as JSON on stdin; exit 0 passes or print a 0-1 score." },
 ];
 
-function Dataset({ name }: { name: string }) {
+export function DatasetView({ name, onNew }: { name: string; onNew?: () => void }) {
   const [q, setQ] = useState("");
   const [offset, setOffset] = useState(0);
   const PAGE = 50;
@@ -209,19 +157,12 @@ function Dataset({ name }: { name: string }) {
   const [grading, setGrading] = useState(false);
   const [evalOpen, setEvalOpen] = useState(false);
   const [adding, setAdding] = useState(false);
-  const { reloadStatus, reloadSessions } = useApp();
+  const { reloadStatus, reloadBoard } = useApp();
 
-  const train = async () => {
-    try {
-      const s = await api.post<Session>("/api/session", { agent: "train" });
-      await api.post(`/api/session/${s.id}/prompt`, { text: `Train a model on the dataset ${name}. Check the data and the baseline first, then show me the plan and its cost before anything is uploaded or spent.` });
-      reloadSessions();
-      go("chat", s.id);
-    } catch (e) { toastError(e); }
-  };
+  const train = () => fillComposer(`Train a model on the dataset ${name}. Check the data and the baseline first, then propose the training run with its cost.`, true);
 
-  if (error) return <div className="page"><div className="page-inner"><Empty title="Dataset not found">{error}</Empty></div></div>;
-  if (!data) return <div className="page"><div className="page-inner row muted"><span className="spinner" /> Loading…</div></div>;
+  if (error) return <Empty title="Dataset not found">{error}</Empty>;
+  if (!data) return <div className="row muted"><span className="spinner" /> loading…</div>;
 
   const remove = async () => {
     if (!confirm(`Remove ${selected.size} rows from ${name}?`)) return;
@@ -236,23 +177,24 @@ function Dataset({ name }: { name: string }) {
     try {
       await api.del(`/api/dataset/${name}`);
       reloadStatus();
-      go("data");
+      reloadBoard();
+      go("s", "data");
     } catch (e) { toastError(e); }
   };
   const scores = Object.entries(data.latest_scores || {}).sort((a, b) => b[1].score - a[1].score);
 
   return (
-    <div className="page"><div className="page-inner">
-      <div className="page-head">
+    <>
+      <div className="stage-head">
         <div className="grow">
-          <div className="small muted"><a href="#/data">Data</a> /</div>
-          <h1 className="mono">{name}</h1>
-          {data.description && <p>{data.description}</p>}
+          <h1>Data · <span className="mono">{name}</span></h1>
+          <p>{data.description || "Examples of what the model should do. A share is held out and sealed from training, so scores mean something."}</p>
         </div>
         <div className="actions">
-          <button className="btn" onClick={() => setAdding(true)}><Icon name="plus" /> Add rows</button>
-          <button className="btn" onClick={() => setEvalOpen(true)}><Icon name="play" /> Evaluate a model</button>
-          <button className="btn primary" onClick={train}><Icon name="spark" /> Train on this</button>
+          <button className="btn" onClick={() => setAdding(true)}><Icon name="plus" /> add rows</button>
+          {onNew && <button className="btn" onClick={onNew}>new dataset</button>}
+          <button className="btn" onClick={() => setEvalOpen(true)}><Icon name="play" /> evaluate</button>
+          <button className="btn primary" onClick={train}><Icon name="spark" /> train on this</button>
         </div>
       </div>
       <div className="stats">
@@ -266,7 +208,7 @@ function Dataset({ name }: { name: string }) {
 
       {scores.length > 0 && (
         <div className="card" style={{ marginBottom: 18 }}>
-          <div className="card-head"><h3>held-out scores</h3><a href={`#/evals`} className="small">all evals</a></div>
+          <div className="card-head"><h3>held-out scores</h3><a href={`#/grid/${encodeURIComponent(name)}`} className="small">every row →</a></div>
           <div className="bars card-pad">
             {scores.map(([target, s]) => (
               <div key={target} className="barrow" style={{ cursor: "pointer" }} onClick={() => go("evals", s.eval)}>
@@ -342,11 +284,11 @@ function Dataset({ name }: { name: string }) {
       {grading && <GraderModal name={name} spec={data.grader_spec} system={data.system} description={data.description || ""} onClose={() => setGrading(false)} onSaved={() => { setGrading(false); reload(); }} />}
       {evalOpen && <RunEvalModal dataset={name} onClose={() => setEvalOpen(false)} />}
       {adding && <NewDataset initialName={name} onClose={() => setAdding(false)} onCreated={() => { setAdding(false); reload(); }} />}
-    </div></div>
+    </>
   );
 }
 
-function GraderModal({ name, spec, system, description, onClose, onSaved }: {
+export function GraderModal({ name, spec, system, description, onClose, onSaved }: {
   name: string; spec: any; system: string; description: string; onClose: () => void; onSaved: () => void;
 }) {
   const [s, setS] = useState<any>(spec || { type: "judge" });
