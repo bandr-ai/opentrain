@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { api, Board, events, Job, ModelRow, Session, Status } from "./api";
 import { money, throttle, Toasts } from "./ui";
 import { AgentPanel } from "./pages/Agent";
-import BoardPage, { DropZone, StageStrip } from "./pages/Board";
+import BoardPage, { DropZone } from "./pages/Board";
 import GridPage from "./pages/Grid";
 import { EvalDetail } from "./pages/Evals";
 import Jobs from "./pages/Jobs";
@@ -221,10 +221,11 @@ export default function App() {
           <span className="grow" />
           {running.length > 0 && <a className="busy-t" href="#/jobs"><span className="dot busy" /> {running.length} running</a>}
           {waiting && <span className="err"><span className="dot waiting" /> needs you</span>}
-          {b && <span className="budget" title={`${money(b.remaining_usd)} left`}>{money(b.spent_usd)} <span className="faint">/ {b.text}</span></span>}
+          {b && <span className="budget" title={`${money(b.remaining_usd)} left of ${b.text}`}>{money(b.spent_usd)} <span className="faint">spent</span></span>}
+          <a className="toplink" href="#/jobs">jobs</a>
+          <a className="toplink" href="#/settings">settings</a>
           <span className={`conn ${connected ? "" : "off"}`} title={connected ? "connected" : "reconnecting…"}><i /></span>
         </header>
-        {board && <StageStrip board={board} active={(route.page === "s" ? route.arg : "") as any} chat={onChat} />}
         <div className={`body ${onChat ? "chat" : "view"}`}>
           {!onChat && (
             <main className="main">

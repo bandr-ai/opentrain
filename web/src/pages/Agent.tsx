@@ -2,6 +2,8 @@ import { KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef
 import { api, events, Job, Message, Part, Permission, Proposal, Question, Session } from "../api";
 import { go, useApp } from "../App";
 import { ago, dur, Icon, Markdown, money, Progress, toastError } from "../ui";
+import { Curve } from "./Board";
+import { Scorecard } from "./Scorecard";
 
 // The agent sits beside the board: it does the work, proposes one step at a time, and you steer it.
 
@@ -47,7 +49,7 @@ export function fillComposer(text: string, submit = false) {
 // ------------------------------------------------------------------ the panel
 
 export function AgentPanel({ convo = true }: { convo?: boolean }) {
-  const { sid, setSid, sessions, busy, jobs, reloadSessions } = useApp();
+  const { sid, setSid, sessions, busy, jobs, reloadSessions, board } = useApp();
   const [session, setSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [perms, setPerms] = useState<Permission[]>([]);
@@ -165,6 +167,7 @@ export function AgentPanel({ convo = true }: { convo?: boolean }) {
           ))}
         </div>
       )}
+      {convo && board && (board.datasets.length > 0 || board.scoreboard.length > 0) && <Scorecard board={board} />}
       {convo && <div className="agent-scroll" ref={scroller} onScroll={(e) => {
         const el = e.currentTarget;
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -200,8 +203,7 @@ function AgentHello() {
   return (
     <div className="hello">
       <pre className="logo">{"opentrain"}</pre>
-      <p>Say what the model should get better at. The agent gets data, sets up grading, measures what you have, and trains only if it's worth it.</p>
-      <p className="faint">Anything that spends money or changes what's live waits for your OK.</p>
+      <p>What should your model get better at?</p>
       <div className="starters">
         {STARTERS.map(([t, text], i) => (
           <button key={t} className="starter" onClick={() => fillComposer(text)}>
@@ -209,7 +211,7 @@ function AgentHello() {
           </button>
         ))}
       </div>
-      <p className="faint small">or drop a CSV / JSONL file anywhere on the page · 1–7 open a stage · esc back here</p>
+      <p className="faint small">or drop a CSV / JSONL file here</p>
     </div>
   );
 }
@@ -398,6 +400,7 @@ export function JobCard({ job }: { job: Job }) {
         <button className="btn ghost sm" onClick={() => go("jobs", job.id)}>log</button>
       </div>
       {job.state === "running" && <Progress value={job.progress} />}
+      {job.kind === "train" && (job.curve?.length ?? 0) > 1 && <Curve run={{ ...(job as any), curve: job.curve }} height={56} />}
       <div className="small muted">
         {job.state !== "running" && <span className={job.state === "succeeded" ? "ok" : "err"}>{job.state}. </span>}
         {job.detail}

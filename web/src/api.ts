@@ -97,6 +97,8 @@ export type Job = {
   dataset?: string;
   error?: string;
   result?: any;
+  loss?: number | null;
+  curve?: [number, number][];
   time?: { created?: number; started?: number; ended?: number };
 };
 

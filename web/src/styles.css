@@ -137,7 +137,7 @@ input[type=checkbox], input[type=radio] { accent-color: var(--text); }
 .main-pad { padding: 24px; }
 
 /* the agent: the whole screen on chat, just the prompt (and anything waiting for you) under other views */
-.agent { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.agent { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .agent.foot-only { flex: none; border-top: 1px solid var(--line); }
 .agent-head { width: 100%; max-width: var(--col); margin: 0 auto; display: flex; align-items: center; gap: 6px; padding: 8px 24px 0; }
 .agent-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 4px 0; cursor: pointer; text-align: left; color: var(--muted); font-size: var(--fs-s); }
@@ -149,7 +149,8 @@ input[type=checkbox], input[type=radio] { accent-color: var(--text); }
 .agent-sessions button .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent-sessions button:hover, .agent-sessions button.on { background: var(--hover); color: var(--text); }
 .agent-scroll { flex: 1; overflow-y: auto; min-height: 0; }
-.agent-convo { max-width: var(--col); margin: 0 auto; padding: 18px 24px 28px; display: grid; gap: 18px; }
+.agent-convo { max-width: var(--col); margin: 0 auto; padding: 18px 24px 28px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.msg-ai table { display: block; max-width: 100%; overflow-x: auto; }
 .agent-foot { width: 100%; max-width: var(--col); margin: 0 auto; padding: 10px 24px 16px; display: grid; gap: 10px; max-height: 60vh; overflow-y: auto; }
 
 .hello { color: var(--muted); padding-top: 6vh; }
@@ -288,7 +289,7 @@ input[type=checkbox], input[type=radio] { accent-color: var(--text); }
 .msg-user::before { content: "> "; color: var(--faint); font-weight: 400; }
 .msg-synth { font-size: var(--fs-s); color: var(--faint); border-left: 2px solid var(--line-strong); padding: 2px 0 2px 12px; white-space: pre-wrap; }
 .msg-synth b { color: var(--muted); font-weight: 400; }
-.msg-ai { display: grid; gap: 8px; }
+.msg-ai { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .msg-meta { font-size: var(--fs-xs); color: var(--faint); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .md { line-height: 1.65; overflow-wrap: anywhere; }
 .md > :first-child { margin-top: 0; }
@@ -502,3 +503,34 @@ tr.g-open td { background: var(--sunken); }
   .g-detail { grid-template-columns: 1fr; }
   .stat { border-right: 0; border-bottom: 1px solid var(--line); }
 }
+
+/* ------------------------------------------------------------------ the scorecard */
+.toplink { color: var(--muted); }
+.toplink:hover { color: var(--text); text-decoration: none; }
+.score { border-bottom: 1px solid var(--line); padding: 10px 24px 8px; font-size: var(--fs-s); }
+.score > * { max-width: var(--col); margin-left: auto; margin-right: auto; }
+.score-t { width: 100%; border-collapse: collapse; }
+.score-t th { text-align: right; font-weight: 400; white-space: nowrap; color: var(--faint); padding: 0 0 4px 12px; }
+.score-t td { text-align: right; padding: 3px 0 3px 12px; white-space: nowrap; }
+.score-t td:first-child, .score-t th:first-child { text-align: left; padding-left: 0; width: 100%; white-space: normal; }
+.score-t tr.click:hover td { background: var(--hover); }
+.score-t .tag { color: var(--faint); margin-left: 6px; }
+.score-empty { color: var(--faint); padding: 2px 0 6px; }
+.score-next { display: flex; align-items: center; gap: 10px; padding-top: 8px; }
+.pips { display: inline-flex; align-items: center; gap: 3px; }
+.pips i { display: block; width: 14px; height: 4px; border-radius: 1px; background: var(--line); }
+.pips i.done { background: var(--good); }
+.pips i.running { background: var(--busy); animation: pulse 1.2s infinite; }
+.jobcard .curve { width: 100%; }
+@media (max-width: 640px) {
+  .score { padding: 8px 16px; }
+  .score-t th:nth-child(4), .score-t td:nth-child(4) { display: none; }
+  .score-t td:first-child { overflow-wrap: anywhere; }
+  .score-t .tag { display: block; margin-left: 0; }
+  .top { gap: 10px; padding: 0 12px; }
+  .top .ds, .top .budget .faint { display: none; }
+  .proj { max-width: 26vw; min-width: 0; }
+  .top { overflow: hidden; }
+}
+.tool { min-width: 0; }
+.agent-scroll { overflow-x: hidden; }
