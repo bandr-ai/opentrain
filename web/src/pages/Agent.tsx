@@ -1,7 +1,7 @@
 import { KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, events, Job, Message, Part, Permission, Proposal, Question, Session } from "../api";
 import { go, useApp } from "../App";
-import { ago, dur, Icon, Markdown, money, Progress, toastError } from "../ui";
+import { ago, dur, Icon, Markdown, money, pct, Progress, toastError } from "../ui";
 import { Curve } from "./Board";
 import { Scorecard } from "./Scorecard";
 
@@ -400,7 +400,10 @@ export function JobCard({ job }: { job: Job }) {
         <button className="btn ghost sm" onClick={() => go("jobs", job.id)}>log</button>
       </div>
       {job.state === "running" && <Progress value={job.progress} />}
-      {job.kind === "train" && (job.curve?.length ?? 0) > 1 && <Curve run={{ ...(job as any), curve: job.curve }} height={56} />}
+      {job.kind === "train" && (job.reward_curve?.length ?? 0) > 1 ? (
+        <div className="curve-l"><span className="faint small">reward {job.reward != null ? pct(job.reward) : ""}</span>
+          <Curve run={{ ...(job as any), curve: job.reward_curve }} height={56} /></div>
+      ) : job.kind === "train" && (job.curve?.length ?? 0) > 1 && <Curve run={{ ...(job as any), curve: job.curve }} height={56} />}
       <div className="small muted">
         {job.state !== "running" && <span className={job.state === "succeeded" ? "ok" : "err"}>{job.state}. </span>}
         {job.detail}

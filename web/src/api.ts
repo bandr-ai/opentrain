@@ -99,6 +99,9 @@ export type Job = {
   result?: any;
   loss?: number | null;
   curve?: [number, number][];
+  reward?: number | null;
+  reward_curve?: [number, number][];
+  method?: string;
   time?: { created?: number; started?: number; ended?: number };
 };
 
