@@ -19,14 +19,22 @@ $ opentrain web        # the web app (or: opentrain, for the terminal app)
   your rubric, or your own script.
 - **Any model to compare.** Evaluate Claude, GPT, an open model or your own trained versions on the
   same held-out rows; the leaderboard tells you whether training is even worth it.
+- **Any compute.** Train and serve on your own Modal account (any GPU, per-second billing, scales
+  to zero), on Tinker, or on your own GPU. Base models are measured the same way:
+  `modal/Qwen/Qwen2.5-0.5B-Instruct` is a model you can evaluate before training it.
+- **Recipes, not guesses.** The training settings come from the task kind, the data size and the
+  model size, with distillation first when answers are missing.
 - **Proof before shipping.** Part of every dataset is sealed from training. A version goes live only
   when it beats the baseline on those rows with nothing regressing.
+- **Use it from Claude Code.** `opentrain mcp --install` gives your Claude Code the same tools,
+  under the same budget and the same sealed rows; you watch the scorecard in the web app.
 
 ## Install
 
 ```bash
-uv tool install "opentrain-cli[tinker] @ git+https://github.com/bandr-ai/opentrain"
-cd your-repo && opentrain
+uv tool install "opentrain-cli[modal] @ git+https://github.com/bandr-ai/opentrain"
+modal setup                     # once: signs in to your Modal account
+cd your-project && opentrain web
 ```
 
 Python 3.11+. The engine runs on whatever you already have: your own **Claude Code** login (no key
@@ -65,34 +73,60 @@ The same shape as opencode: one server per user, and every front end is a client
 ## The web app
 
 `opentrain web` opens it in your browser (a one-time sign-in link; it talks to your local server).
-It is one screen per project, built around the loop:
+One screen: the conversation, with a scorecard pinned above it.
 
 ```
- goal → data → grade → baseline → train → prove → ship          budget  $0.42 / $20 a week
-┌───────────────────────────────────────────────────────┬──────────────────────────────┐
-│ the stage you are on: its evidence and its actions    │ the agent                    │
-│  · baseline: the scoreboard, every model on the same  │  what it did, in a few lines │
-│    held-out rows (score, cost per 1k, latency)        │ ┌──────────────────────────┐ │
-│  · train: runs with their loss curve and cost         │ │ next step · prove        │ │
-│  · prove: the new version against the baseline,       │ │ Evaluate v2 on the 24    │ │
-│    rows fixed and rows broken                         │ │ held-out rows  ~$0.01    │ │
-│  · ship: what is live, the gate, a playground         │ │ [Approve] [Change] [Skip]│ │
-│                                                       │ └──────────────────────────┘ │
-└───────────────────────────────────────────────────────┴──────────────────────────────┘
+ opentrain  ~/support-bot · tickets                              $0.03 spent  jobs  settings
+ ───────────────────────────────────────────────────────────────────────────────────────────
+                                                 quality   $/1k   speed
+   cc/sonnet                     best              100%    free    2.4s
+   v1                            live              100%   $0.07    0.9s
+   Qwen/Qwen2.5-0.5B-Instruct    base, untrained    42%   $0.08    0.9s
+   ▬▬▬▬▬▬▬  ✓ v1 live                                               details
+ ───────────────────────────────────────────────────────────────────────────────────────────
+   the conversation: what the agent did, in a few lines; jobs with their loss curve
+   ┌ next step ─────────────────────────────────────────────┐
+   │ Train Qwen2.5-0.5B on 54 rows   ~$0.17 · 2 min          │
+   │ [Approve] [Change] [Skip]                               │
+   └─────────────────────────────────────────────────────────┘
+ > reply…
 ```
 
-- **The strip is the navigation.** Each stage shows its state (done, running, next) in one line;
-  keys 1–7 jump to them. A red dot marks the stage a proposed step belongs to.
-- **The middle is the evidence.** Every number opens the rows behind it: `every row →` is the grid
-  of held-out rows against every model, with each answer and the grader's reason. Held-out rows
-  are sealed from the agent and from training; you can read them, the agent never can.
-- **The agent works beside it.** It proposes one step at a time with its cost and time; approving
-  covers exactly the gated actions that step needs, so you answer once, not once per permission.
+- **The scorecard is the point.** The best model, the cheapest one at about the same quality, what
+  is live, what was trained and the untrained base: quality on the sealed rows, cost per 1,000
+  answers, speed. Click a row for every held-out row against every model, with each answer and
+  the grader's reason (you can read held-out rows; the agent never can).
+- **One step at a time.** Anything that costs money, uploads data, trains or changes what is live
+  comes as a card with its cost and time. Approving covers exactly what that step needs.
+- **Details** opens the step behind the progress bar (data, grading, training runs, the gate).
 - **Drop a file anywhere** to make a dataset.
 
 The app is built from `web/` (Vite + React) into the package, so using it needs no Node:
 `cd web && pnpm install && pnpm build` after changing it, `pnpm dev` to work on it against a
 running server (`OPENTRAIN_URL` picks which).
+
+## From Claude Code
+
+```bash
+opentrain mcp --install      # claude mcp add opentrain -- opentrain mcp (project scope)
+```
+
+Then ask Claude Code, for example, "use opentrain to find the cheapest model that handles my
+tickets dataset, train one if it's worth it". It gets OpenTrain's tools (datasets, graders, evals,
+recipes, training, the gate) and none of its own shell over them: every call runs on the OpenTrain
+server, which enforces the Trainfile's budget, keeps held-out rows sealed and refuses a promotion
+the gate rejects. Claude Code's own permission prompts are the approval. Its calls appear live in
+the web app as the "Claude Code (attached)" conversation, and the scorecard fills in as it works.
+
+## Training on Modal
+
+`trainer modal` in the Trainfile. OpenTrain ships its trainer (TRL + PEFT LoRA) to a Modal GPU,
+streams the loss back, and saves the adapter on a Modal volume. Serving is vLLM on Modal, one app
+per base model with every adapter trained on it, behind a key OpenTrain generates; it scales to
+zero, so the first call after idle waits for a cold start (about two minutes). GPUs are picked by
+model size with fallbacks (an L4 or A10 to serve a small model, an L40S or A100 to train it).
+Costs are measured GPU seconds at Modal's list price. A serving cost per answer is its share of
+the GPU while it ran; at real traffic, with many requests batched, it is far lower.
 
 ## Agents
 
@@ -151,7 +185,8 @@ eval cap     8 per run
 | `opentrain [dir]` | the terminal app |
 | `opentrain run "..."` | one instruction, no interface (`--yes` approves asks, `--json` streams events) |
 | `opentrain serve` | the server in the foreground (`--host`, `--password` for a remote box) |
-| `opentrain web` | the dashboard in a browser (one-time sign-in link) |
+| `opentrain web` | the web app in a browser (one-time sign-in link) |
+| `opentrain mcp` | OpenTrain's tools for Claude Code or any MCP client (`--install` adds it to Claude Code) |
 | `opentrain attach URL` | the terminal app against a server elsewhere |
 | `opentrain export` | tasks and training set in open formats, for any trainer |
 | `opentrain model serve` | a trained version as an OpenAI-compatible endpoint |
@@ -165,7 +200,15 @@ Markdown in `.opentrain/commands/`.
 
 `goal` is plain words. `speed`, `fix` and `cost` are built-in recipes for coding-agent work.
 
-## Recipes are skills (coding-agent work)
+## Recipes
+
+For datasets, `dataset_recipe` picks the settings from the task kind (labels, structured output,
+free-form answers, read from the grader and the answers), the number of rows and the base model's
+size, says what to do first (distil missing answers with a strong teacher) and what to try if the
+run does not beat the baseline. `dataset_train` applies it unless told otherwise. Measured results
+are in [docs/RECIPES.md](docs/RECIPES.md).
+
+### Coding-agent work: recipes are skills
 
 | Goal | Data recipe | Training recipe | Proved by |
 | --- | --- | --- | --- |
@@ -185,6 +228,8 @@ Markdown in `.opentrain/commands/`.
 | Web app | Driven end to end in a browser: upload, grading, a live eval, chat with approvals |
 | Terminal app, `run`, `attach` | Tested (Textual pilot and live server) |
 | Mining tasks from Claude Code sessions | Runs on real logs; yield on real sessions is low (see docs/FINDINGS.md) |
+| Modal training and serving | **Run live**: Qwen2.5-0.5B on 54 rows, 28 steps on an L40S in 30 s for $0.02; held-out 42% → 100% (docs/RECIPES.md) |
+| Claude Code over MCP (`opentrain mcp`) | **Run live**: Claude Code evaluated, trained, waited and promoted through the tools |
 | Tinker training | Written against SDK 0.40; **no real training run yet** (needs `TINKER_API_KEY`) |
 | Local training (TRL + PEFT) | Written; untested here |
 
