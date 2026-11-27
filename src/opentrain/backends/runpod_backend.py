@@ -214,6 +214,13 @@ def delete_pod(pod_id: str) -> None:
         pass
 
 
+def _serve_args(base: str) -> dict[str, Any]:
+    """vLLM flags for this model's tool calls and reasoning, and the context to serve it at."""
+    from ..models import serve_context, vllm_tool_args
+
+    return {"args": vllm_tool_args(base), "max_len": serve_context(base)}
+
+
 def _agent(url: str, method: str, path: str, body: bytes | dict | None = None, *, timeout: float = 90,
            raw: bool = False) -> Any:
     data = json.dumps(body).encode() if isinstance(body, dict) else body
@@ -373,7 +380,8 @@ def run(store: JobStore, job: dict[str, Any]) -> None:
                     cost = round((time.time() - t0) * per_s, 4)
                     _remember(spec.base_model, pod, {jid: spec.lora_rank})
                     _agent(pod["url"], "POST", "/serve", {"base": spec.base_model,
-                                                          "adapters": {jid: spec.lora_rank}})
+                                                          "adapters": {jid: spec.lora_rank},
+                                                          **_serve_args(spec.base_model)})
                     keep = True
                     patch = {"rounds": ev["rounds"]} if ev.get("rounds") else {}
                     store.update(jid, state="succeeded", progress=1.0, checkpoint=f"runpod://{jid}", cost_usd=cost,
@@ -447,7 +455,7 @@ def endpoint(base: str, adapter: str | None = None, rank: int = 32) -> Endpoint:
                 if not src.is_file():
                     raise RunPodError(f"the adapter for {name} is not on this machine ({src})")
                 _agent(cur["url"], "POST", f"/adapter?name={name}", src.read_bytes(), timeout=95)
-        _agent(cur["url"], "POST", "/serve", {"base": base, "adapters": want})
+        _agent(cur["url"], "POST", "/serve", {"base": base, "adapters": want, **_serve_args(base)})
         _remember(base, cur, want)
         return Endpoint(base_url=cur["url"] + "/v1", model=adapter or "base", api_key_env=SERVE_KEY_ENV)
 

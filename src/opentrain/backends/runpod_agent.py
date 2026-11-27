@@ -92,7 +92,7 @@ def train(body: dict) -> None:
         state["last"] = time.time()
 
 
-def serve(base: str, adapters: dict[str, int]) -> None:
+def serve(base: str, adapters: dict[str, int], args: list[str] | None = None, max_len: int | None = None) -> None:
     old = state.get("vllm")
     if old and old.poll() is None:
         old.terminate()
@@ -101,8 +101,8 @@ def serve(base: str, adapters: dict[str, int]) -> None:
         except subprocess.TimeoutExpired:
             old.kill()
     cmd = ["vllm", "serve", base, "--served-model-name", "base", "--host", "127.0.0.1", "--port", "8001",
-           "--max-model-len", os.environ.get("OT_SERVE_MAX_LEN", "8192"), "--enforce-eager",
-           "--generation-config", "vllm"]
+           "--max-model-len", str(max_len or os.environ.get("OT_SERVE_MAX_LEN", "8192")), "--enforce-eager",
+           "--generation-config", "vllm", *(args or [])]
     if adapters:
         rank = next(r for r in (8, 16, 32, 64, 128, 256, 512) if r >= max(adapters.values()))
         cmd += ["--enable-lora", "--max-loras", str(min(8, len(adapters))), "--max-lora-rank", str(rank),
@@ -226,7 +226,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"saved": name})
         if u.path == "/serve":
             body = json.loads(self._body())
-            serve(body["base"], body.get("adapters") or {})
+            serve(body["base"], body.get("adapters") or {}, body.get("args"), body.get("max_len"))
             return self._json(200, {"starting": True})
         if u.path.startswith("/v1/"):
             return self._proxy(self._body())

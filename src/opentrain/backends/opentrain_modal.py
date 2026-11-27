@@ -80,6 +80,40 @@ def slug(base: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")[:40]
 
 
+def trace_tokens(tok, row: dict, max_tokens: int) -> list[dict]:
+    """Training examples (``input_ids``, ``labels`` = -100 except on assistant tokens) for one agent
+    trace, or for a prompt-completion pair trained beside traces.
+
+    One example per trace, with the loss on every assistant turn, when the chat template renders
+    earlier turns the same way once later ones are added (Qwen3.5, Qwen3.8). Templates that rewrite
+    history (Qwen3 drops old reasoning) get one example per assistant turn instead: the conversation
+    up to it, rendered as the model will see it, then that turn.
+    """
+    msgs = row.get("messages") or [*row["prompt"], *row["completion"]]
+    kw = {"tools": row["tools"]} if row.get("tools") else {}
+
+    def encode(text: str, spans: list[tuple[int, int]]) -> dict:
+        enc = tok(text, add_special_tokens=False, return_offsets_mapping=True)
+        ids = list(enc["input_ids"])
+        labels = [t if any(a <= s < b for a, b in spans) else -100 for t, (s, _) in zip(ids, enc["offset_mapping"])]
+        return {"input_ids": ids[:max_tokens], "labels": labels[:max_tokens]}
+
+    full = tok.apply_chat_template(msgs, tokenize=False, **kw)
+    turns, stable = [], True
+    for i, m in enumerate(msgs):
+        if m.get("role") != "assistant":
+            continue
+        before = tok.apply_chat_template(msgs[:i], tokenize=False, add_generation_prompt=True, **kw)
+        through = tok.apply_chat_template(msgs[: i + 1], tokenize=False, **kw)
+        if not through.startswith(before) or len(through) <= len(before):
+            raise ValueError(f"cannot find assistant turn {i} in the rendered conversation")
+        turns.append((before, through))
+        stable = stable and full.startswith(through)
+    if stable:
+        return [encode(full, [(len(b), len(t)) for b, t in turns])]
+    return [encode(t, [(len(b), len(t))]) for b, t in turns]
+
+
 if MODE == "train":
     app = modal.App("opentrain-train")
     train_image = (
@@ -143,6 +177,12 @@ if MODE == "train":
                             events.put({"event": "step", "step": state.global_step, "total": state.max_steps,
                                         "loss": logs["loss"], "seconds": round(time.time() - t0, 1)})
 
+                if any("messages" in r for r in rows):
+                    # Agent traces: one example per trace, loss on every assistant turn (not only the last).
+                    from transformers import AutoTokenizer
+
+                    tok = AutoTokenizer.from_pretrained(spec["base_model"])
+                    data = Dataset.from_list([ex for r in rows for ex in trace_tokens(tok, r, spec["max_tokens"])])
                 trainer = SFTTrainer(model=spec["base_model"], args=config, train_dataset=data, peft_config=lora,
                                      callbacks=[Report()])
                 trainer.train()
@@ -222,7 +262,9 @@ if MODE == "serve":
         .uv_pip_install("vllm==0.21.0", "transformers==5.8.1")
         .env({"HF_XET_HIGH_PERFORMANCE": "1", "OT_MODAL_MODE": "serve", "OT_SERVE_BASE": BASE,
               "OT_SERVE_GPU": os.environ.get("OT_SERVE_GPU", "L4"),
-              "OT_SERVE_ADAPTERS": json.dumps(ADAPTER_RANKS)})
+              "OT_SERVE_ADAPTERS": json.dumps(ADAPTER_RANKS),
+              "OT_SERVE_ARGS": os.environ.get("OT_SERVE_ARGS", "[]"),
+              "OT_SERVE_MAX_LEN": os.environ.get("OT_SERVE_MAX_LEN", "8192")})
     )
 
     @app.function(image=serve_image, gpu=gpus("OT_SERVE_GPU", "L4"), timeout=24 * 3600,
@@ -238,6 +280,7 @@ if MODE == "serve":
                "--generation-config", "vllm"]
         if os.environ.get("OPENTRAIN_SERVE_KEY"):
             cmd += ["--api-key", os.environ["OPENTRAIN_SERVE_KEY"]]
+        cmd += json.loads(os.environ.get("OT_SERVE_ARGS") or "[]")  # tool-call and reasoning parsers
         if ADAPTER_RANKS:
             rank = next(r for r in (8, 16, 32, 64, 128, 256, 512) if r >= max(ADAPTER_RANKS.values()))
             cmd += ["--enable-lora", "--max-loras", str(min(8, len(ADAPTER_RANKS))),

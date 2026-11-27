@@ -50,10 +50,13 @@ ANTHROPIC_BASE = "https://tinker.thinkingmachines.dev/services/tinker-prod/anthr
 """Tinker's Anthropic Messages-compatible endpoint; clients append ``/v1/messages``."""
 KEY_ENV = "TINKER_API_KEY"
 
-PRICES_AS_OF = "2026-11-25"
+PRICES_AS_OF = "2026-11-27"
 TRAIN_USD_PER_MTOK: dict[str, float] = {
     # From https://tinker-docs.thinkingmachines.ai/tinker/models.json ("train" field), as of PRICES_AS_OF.
     # A model not listed here needs spec.extra["usd_per_mtok"]; we never guess a price.
+    "thinkingmachines/Inkling-2-Mini": 0.75,
+    "thinkingmachines/Inkling-2-Small": 1.50,
+    "thinkingmachines/Inkling-Small": 1.73,
     "Qwen/Qwen3-8B": 0.44,
     "Qwen/Qwen3.5-4B": 0.737,
     "Qwen/Qwen3.5-9B": 1.463,

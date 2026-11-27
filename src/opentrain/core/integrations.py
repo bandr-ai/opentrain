@@ -60,9 +60,21 @@ GPU_MODELS: list[dict[str, Any]] = [
 ]
 
 # Base models each trainer can fine-tune (LoRA). Tinker's list follows its documentation.
+from ..models import CATALOG as _CAT  # noqa: E402
+
+
+def _from_catalog(trainer: str) -> list[dict[str, Any]]:
+    """Students for coding work first (``opentrain.models``), each with what it needs."""
+    from ..models import CATALOG
+
+    return [{"id": m.id, "params": m.params(), "note": m.notes, "tier": m.tier, "coding": m.coding}
+            for m in CATALOG if trainer in m.trainers]
+
+
 BASE_MODELS: dict[str, list[dict[str, Any]]] = {
     "tinker": [
-        {"id": "Qwen/Qwen3-8B", "params": "8B", "note": "default: fast to train and to serve"},
+        *_from_catalog("tinker"),
+        {"id": "Qwen/Qwen3-8B", "params": "8B", "note": "fast to train and to serve"},
         {"id": "Qwen/Qwen3-32B", "params": "32B", "note": "stronger, slower"},
         {"id": "Qwen/Qwen3-30B-A3B", "params": "30B MoE (3B active)", "note": "fast inference"},
         {"id": "Qwen/Qwen3-235B-A22B-Instruct-2507", "params": "235B MoE", "note": "largest"},
@@ -70,8 +82,8 @@ BASE_MODELS: dict[str, list[dict[str, Any]]] = {
         {"id": "meta-llama/Llama-3.3-70B-Instruct", "params": "70B", "note": ""},
         {"id": "openai/gpt-oss-20b", "params": "20B MoE", "note": ""},
     ],
-    "modal": GPU_MODELS,
-    "runpod": GPU_MODELS,
+    "modal": [*_from_catalog("modal"), *[m for m in GPU_MODELS if m["id"] not in {c.id for c in _CAT}]],
+    "runpod": [*_from_catalog("runpod"), *[m for m in GPU_MODELS if m["id"] not in {c.id for c in _CAT}]],
     "local": [
         {"id": "Qwen/Qwen3-0.6B", "params": "0.6B", "note": "runs on a laptop (MPS or CPU)"},
         {"id": "Qwen/Qwen3-1.7B", "params": "1.7B", "note": "laptop with 16GB+"},
@@ -82,13 +94,55 @@ BASE_MODELS: dict[str, list[dict[str, Any]]] = {
 }
 
 
+def _read(path: Path) -> str | None:
+    try:
+        return path.read_text().strip() or None
+    except OSError:
+        return None
+
+
+def found_elsewhere(iid: str) -> tuple[str, str | None] | None:
+    """A login another tool already keeps on this machine: (where it is, the key if OpenTrain must
+    export it itself). Nothing to paste when the person has already signed in with that tool."""
+    home = Path.home()
+    if iid == "huggingface":
+        hf_home = Path(os.environ.get("HF_HOME") or home / ".cache" / "huggingface")
+        for p in (Path(os.environ["HF_TOKEN_PATH"]) if os.environ.get("HF_TOKEN_PATH") else None,
+                  hf_home / "token", home / ".huggingface" / "token"):
+            if p and (key := _read(p)):
+                return f"{p} (huggingface-cli login)", key
+    elif iid == "kaggle":
+        cfg = Path(os.environ.get("KAGGLE_CONFIG_DIR") or home / ".kaggle")
+        if (cfg / "kaggle.json").is_file() or (cfg / "access_token").is_file():
+            return f"{cfg} (kaggle CLI)", None
+    elif iid == "modal":
+        p = Path(os.environ.get("MODAL_CONFIG_PATH") or home / ".modal.toml")
+        if p.is_file() and "token_id" in (_read(p) or ""):
+            return f"{p} (modal setup)", None
+    elif iid == "runpod":
+        for p in (home / ".runpod" / "config.toml", home / ".runpod.yaml"):
+            if p.is_file() and "apikey" in (_read(p) or "").lower().replace("_", ""):
+                return f"{p} (runpodctl)", None
+    elif iid == "fireworks":
+        p = home / ".fireworks" / "auth.ini"
+        if p.is_file() and "api_key" in (_read(p) or ""):
+            return f"{p} (firectl)", None
+    return None
+
+
 def load_into_env() -> list[str]:
-    """Export stored keys into this process's environment (never overriding what is already set)."""
+    """Export stored keys, and logins other tools keep, into this process's environment (never
+    overriding what is already set). Workers and Modal secrets started later inherit them."""
     done = []
     for iid, (_, _, var, _) in INTEGRATIONS.items():
+        if os.environ.get(var):
+            continue
         stored = credentials.get(iid)
-        if stored and stored.get("key") and not os.environ.get(var):
+        if stored and stored.get("key"):
             _export(iid, stored["key"])
+            done.append(iid)
+        elif (found := found_elsewhere(iid)) and found[1]:
+            os.environ[var] = found[1]
             done.append(iid)
     return done
 
@@ -131,9 +185,12 @@ def disconnect(iid: str) -> bool:
 def status(iid: str) -> dict[str, Any]:
     name, kind, var, url = INTEGRATIONS.get(iid, (iid, "provider", "", ""))
     stored = credentials.listing().get(iid)
+    elsewhere = None if stored else found_elsewhere(iid)
+    env = bool(var and os.environ.get(var))
     return {"id": iid, "name": name, "kind": kind, "env": var, "url": url,
-            "connected": bool(stored) or bool(var and os.environ.get(var)),
-            "via": "connected" if stored else (f"${var}" if var and os.environ.get(var) else None),
+            "connected": bool(stored) or env or bool(elsewhere),
+            "via": ("connected" if stored else f"found at {elsewhere[0]}" if elsewhere
+                    else f"${var}" if env else None),
             "hint": stored["hint"] if stored else None}
 
 

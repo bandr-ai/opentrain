@@ -39,6 +39,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from ..models import serve_context, vllm_tool_args
 from ..plugs import Endpoint, JobStatus, TrainSpec
 from . import JobStore, missing_modules, spec_from_dict, spec_to_dict, worker_main
 
@@ -221,6 +222,24 @@ def _rows(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
 
 
+def is_trace(row: dict[str, Any]) -> bool:
+    """An agent trace: several assistant turns (tool calls between them). Every one is trained on."""
+    return sum(1 for m in row.get("messages") or [] if m.get("role") == "assistant") > 1
+
+
+def sft_row(row: dict[str, Any]) -> dict[str, Any]:
+    """What the Modal trainer gets for one example: a prompt-completion pair (loss on the answer),
+    or, for an agent trace, the whole conversation (loss on every assistant turn)."""
+    if is_trace(row):
+        from .tinker import hf_messages
+
+        out: dict[str, Any] = {"messages": hf_messages(row["messages"])}
+        if row.get("tools"):
+            out["tools"] = row["tools"]
+        return out
+    return prompt_completion(row)
+
+
 def prompt_completion(row: dict[str, Any]) -> dict[str, Any]:
     """A chat example as TRL's prompt-completion pair: the loss falls on the last assistant turn only,
     for any chat template (no generation markers needed)."""
@@ -245,7 +264,7 @@ def run(store: JobStore, job: dict[str, Any]) -> None:
     spec = spec_from_dict(job["spec"])
     gpus = job.get("gpu") or loop_gpu(spec.base_model, spec.method, spec.extra.get("teacher"))
     gpus = [gpus] if isinstance(gpus, str) else gpus
-    rows = [prompt_completion(r) for r in _rows(spec.data)]
+    rows = [sft_row(r) if spec.method == "sft" else prompt_completion(r) for r in _rows(spec.data)]
     store.log(jid, f"{len(rows)} examples; {spec.method} on {spec.base_model}; LoRA rank {spec.lora_rank}; "
                    f"GPU {' or '.join(gpus)}")
     mod = load_app(OT_MODAL_MODE="train", OT_TRAIN_GPU=json.dumps(gpus), OT_LOOP_GPU=json.dumps(gpus))
@@ -405,7 +424,8 @@ def deploy(base: str, adapters: dict[str, int] | None = None) -> str:
     """Deploy (or redeploy) the serving app for ``base`` with these adapters; return its base URL."""
     env = {**os.environ, "OT_MODAL_MODE": "serve", "OT_SERVE_BASE": base,
            "OT_SERVE_ADAPTERS": json.dumps(adapters or {}), "OT_SERVE_GPU": json.dumps(serve_gpu(base)),
-           "OPENTRAIN_SERVE_KEY": serving_key()}
+           "OPENTRAIN_SERVE_KEY": serving_key(), "OT_SERVE_ARGS": json.dumps(vllm_tool_args(base)),
+           "OT_SERVE_MAX_LEN": str(serve_context(base))}
     p = subprocess.run([sys.executable, "-m", "modal", "deploy", str(APP_FILE)], env=env, capture_output=True,
                        text=True, timeout=1800)
     if p.returncode != 0:
