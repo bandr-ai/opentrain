@@ -80,3 +80,20 @@ def test_fireworks_refuses_coding_data_before_billing(tmp_path):
     spec = TrainSpec(base_model="Qwen/Qwen3.6-35B-A3B", data=data)
     with pytest.raises(ValueError, match="cannot train coding agents"):
         FireworksBackend.__new__(FireworksBackend).estimate(spec)
+
+
+def test_preference_rows_are_told_apart_from_prompt_answer_rows():
+    # a prompt and a plain chosen answer is an ordinary example (rejected is ignored), any key case
+    assert d.normalize({"Prompt": "Q", "chosen": "A", "rejected": "B"})["messages"][-1]["content"] == "A"
+    with pytest.raises(d.DatasetError, match="preference dataset"):  # transcripts, even beside a prompt
+        d.normalize({"prompt": "Q", "chosen": "\n\nHuman: Q\n\nAssistant: A", "rejected": "\n\nHuman: Q\n\nAssistant: B"})
+
+
+def test_a_conversation_folded_into_the_prompt_counts_as_a_trace():
+    from opentrain.backends.gpu_train import multi_turn
+
+    plain = {"prompt": [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
+             "completion": [{"role": "assistant", "content": "a"}]}
+    assert not multi_turn(plain)
+    assert multi_turn({**plain, "prompt": [*plain["prompt"], {"role": "assistant", "content": "x"},
+                                           {"role": "user", "content": "y"}]})

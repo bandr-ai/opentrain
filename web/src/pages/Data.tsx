@@ -7,9 +7,12 @@ import { RunEvalModal } from "./Evals";
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
-function slug(s: string) {
-  return s.toLowerCase().replace(/\.[a-z]+$/, "").replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+function slug(s: string, keepSuffix = false) {
+  const base = keepSuffix ? s.toLowerCase() : s.toLowerCase().replace(/\.[a-z]+$/, "");
+  return base.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
 }
+// a Hugging Face id names the dataset by its last part, dots kept (org/medical.train is not org/medical.test)
+const hfName = (id: string) => slug(id.trim().split("/").pop() || "", true);
 
 export function NewDataset({ onClose, onCreated, initialName, tab: initialTab, file: initialFile }: {
   onClose: () => void; onCreated: (n: string) => void; initialName?: string; tab?: "file" | "hf" | "agent"; file?: File | null;
@@ -31,9 +34,16 @@ export function NewDataset({ onClose, onCreated, initialName, tab: initialTab, f
   const { reloadStatus, reloadBoard } = useApp();
   const extending = !!initialName;
 
+  const switchTab = (t: "file" | "hf" | "agent") => {
+    setTab(t);
+    if (nameTyped) return; // a name typed by hand stays
+    if (t === "file" && file) setName(slug(file.name));
+    if (t === "hf" && hf.trim()) setName(hfName(hf));
+  };
+
   const pickFile = (f: File | null) => {
     setFile(f);
-    if (f && !name) setName(slug(f.name));
+    if (f && !nameTyped) setName(slug(f.name));
   };
 
   const valid = NAME_RE.test(name) && (tab === "file" ? !!file : tab === "hf" ? !!hf.trim() : !!goal.trim());
@@ -74,8 +84,8 @@ export function NewDataset({ onClose, onCreated, initialName, tab: initialTab, f
       </button>
     </>}>
       <div className="tabs">
-        <button className={tab === "file" ? "on" : ""} onClick={() => setTab("file")}>Upload a file</button>
-        <button className={tab === "hf" ? "on" : ""} onClick={() => setTab("hf")}>Hugging Face</button>
+        <button className={tab === "file" ? "on" : ""} onClick={() => switchTab("file")}>Upload a file</button>
+        <button className={tab === "hf" ? "on" : ""} onClick={() => switchTab("hf")}>Hugging Face</button>
         <button className={tab === "agent" ? "on" : ""} onClick={() => setTab("agent")}>Write it with the agent</button>
       </div>
       {!extending && (
@@ -102,7 +112,7 @@ export function NewDataset({ onClose, onCreated, initialName, tab: initialTab, f
         <>
           <label className="field">
             <span>Dataset</span>
-            <input className="input mono" value={hf} onChange={(e) => { setHf(e.target.value); if (!nameTyped) setName(slug(e.target.value.trim().split("/").pop() || "")); }} placeholder="openai/gsm8k" />
+            <input className="input mono" value={hf} onChange={(e) => { setHf(e.target.value); if (!nameTyped) setName(hfName(e.target.value)); }} placeholder="openai/gsm8k" />
             <small>Public datasets the Hugging Face viewer can read. Nothing is uploaded.</small>
           </label>
           <div className="grid2">

@@ -69,7 +69,7 @@ def test_a_trace_trains_on_every_assistant_turn_and_nothing_else(tmp_path):
 
     events = []
     rows = [sft_row(_trace(n)) for n in "abc"] + _rows(2)  # traces and plain pairs in one batch
-    summary = gpu_train.run(_spec("sft"), rows, str(tmp_path), events.append)
+    summary = gpu_train.run({**_spec("sft"), "max_tokens": 8192}, rows, str(tmp_path), events.append)
     assert summary["steps"] == 2 and (tmp_path / "adapter_config.json").exists()
 
 
@@ -77,3 +77,24 @@ def test_a_sampling_method_refuses_traces_before_loading_a_model(tmp_path):
     with pytest.raises(ValueError, match="train with sft"):
         gpu_train.run({**_spec("rl"), "base_model": "no/such-model"}, [sft_row(_trace("a"))], str(tmp_path),
                       lambda e: None, lambda p, a, r: 1.0)
+
+
+def test_rl_with_a_reward_that_varies_updates_the_adapter(tmp_path):
+    from safetensors.torch import load_file
+
+    steps = []
+    grade = lambda p, a, r: float(len(a) % 2 == 0)  # noqa: E731 - differs between samples of one group
+    spec = _spec("rl")
+    spec["extra"].update(samples=4, steps=3, temperature=1.5, max_new_tokens=6)
+    gpu_train.run(spec, _rows(), str(tmp_path), lambda e: steps.append(e) if e["event"] == "step" else None, grade)
+    assert any(not e.get("note", "").startswith("0 samples") for e in steps), "no group had signal"
+    weights = load_file(str(tmp_path / "adapter_model.safetensors"))
+    assert any(float(w.abs().sum()) > 0 for k, w in weights.items() if "lora_B" in k)  # B starts at zero
+
+
+def test_a_trace_cut_before_its_answers_is_refused():
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(TINY)
+    with pytest.raises(ValueError, match="max_tokens"):
+        gpu_train.trace_tokens(tok, sft_row(_trace("a")), 20)

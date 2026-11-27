@@ -114,7 +114,8 @@ def normalize(raw: dict[str, Any], *, input_key: str | None = None, output_key: 
                 continue  # tool turns are not part of a plain chat example
             msgs.append({"role": role, "content": _text(m.get("content", m.get("value")))})
     else:
-        if not input_key and "rejected" in raw and not any(isinstance(raw.get(k), str) for k in PROMPT_KEYS):
+        if not output_key and _pick(raw, ("rejected",)) and (
+                not (input_key or _pick(raw, PROMPT_KEYS)) or _transcript(raw.get(_pick(raw, ("chosen",)) or ""))):
             raise DatasetError("this is a preference dataset (chosen/rejected transcripts), not prompts with answers; "
                                "pick a dataset with prompt and answer columns, or name them with input_key/output_key")
         ik = input_key or _pick(raw, PROMPT_KEYS)
@@ -152,6 +153,12 @@ def with_system(row: dict[str, Any], system: str | None) -> dict[str, Any]:
     if not system or any(m["role"] == "system" for m in row["messages"]):
         return row
     return {**row, "messages": [{"role": "system", "content": system}, *row["messages"]]}
+
+
+def _transcript(v: Any) -> bool:
+    """A whole conversation (a list of turns, or "Human: ... Assistant: ..." text), not one answer."""
+    return isinstance(v, list) or (isinstance(v, str) and bool(re.search(r"(^|\n)\s*(Human|User):", v))
+                                   and bool(re.search(r"\n\s*Assistant:", v)))
 
 
 def _pick(raw: dict[str, Any], keys: tuple[str, ...], exclude: str | None = None) -> str | None:

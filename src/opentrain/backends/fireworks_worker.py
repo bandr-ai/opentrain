@@ -241,6 +241,7 @@ def run_loop(store: JobStore, job: dict[str, Any]) -> None:
                                  detail=f"round {rnd + 1}/{rounds} · {rate:.0%} correct · ~${cost()}")
             store.update(jid, rounds=history)
             if not any(h["kept"] for h in history):
+                store.update(jid, cost_usd=cost())  # the sampling was paid for
                 raise RuntimeError("no sampled answer was correct in any round: the base model cannot solve these "
                                    "prompts yet; train with sft first")
         saved = training.save_weights_for_sampler(snapshot_name(jid)).result()

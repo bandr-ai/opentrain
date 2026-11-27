@@ -109,16 +109,21 @@ def trace_tokens(tok, row: dict[str, Any], max_tokens: int) -> list[dict[str, li
         stable = stable and full.startswith(through)
     if not turns:
         raise ValueError("a training example must have an assistant turn")
-    if stable:
-        return [encode(full, [(len(b), len(t)) for b, t in turns])]
-    return [encode(t, [(len(b), len(t))]) for b, t in turns]
+    out = [encode(full, [(len(b), len(t)) for b, t in turns])] if stable else \
+        [encode(t, [(len(b), len(t))]) for b, t in turns]
+    out = [ex for ex in out if any(x != -100 for x in ex["labels"][1:])]  # truncation can cut every answer
+    if not out:
+        raise ValueError(f"every assistant turn of this example starts after max_tokens ({max_tokens}); "
+                         "raise max_tokens or shorten the conversation")
+    return out
 
 
 def multi_turn(row: dict[str, Any]) -> bool:
     """A row the plain prompt-completion path would flatten: a whole conversation, tool specs, or an
     answer that calls tools."""
     return bool(row.get("messages") or row.get("tools")
-                or any(m.get("tool_calls") for m in row.get("completion") or []))
+                or any(m.get("tool_calls") for m in row.get("completion") or [])
+                or any(m.get("role") in ("assistant", "tool") for m in row.get("prompt") or []))
 
 
 def _trailing(tokenizer) -> set[int]:
