@@ -67,6 +67,31 @@ def _cookbook_datums(rows: list[dict[str, Any]], tokenizer: Any, spec, log) -> l
     return out
 
 
+def tml_model(base_model: str) -> bool:
+    """Thinking Machines' own models (Inkling): no HF tokenizer; tml-renderers renders them."""
+    return base_model.startswith("thinkingmachines/")
+
+
+def _tml_datums(rows: list[dict[str, Any]], tokenizer: Any, spec, log) -> list[Any]:
+    """Datums for Inkling models from tml-renderers (TMLv0), one per training example it renders."""
+    import torch
+    from tinker_cookbook.supervised.common import datum_from_model_input_weights
+    from tml_renderers import chat, renderers
+    from tml_renderers.tinker import training_example_to_tinker_model_input_and_weights
+
+    family = spec.base_model.split(":")[0].split("/")[-1]
+    renderer = renderers.Inkling2() if family.startswith("Inkling-2") else renderers.Inkling()
+    log(f"renderer {type(renderer).__name__} (tml-renderers)")
+    out = []
+    for row in rows:
+        msgs = chat.OpenAIMessage.from_openai_chat_dicts(row["messages"], tools=row.get("tools") or None)
+        for ex in renderer.render_for_sft(msgs):
+            model_input, weights = training_example_to_tinker_model_input_and_weights(ex)
+            out.append(datum_from_model_input_weights(model_input, torch.tensor(weights),
+                                                      max_length=spec.max_tokens, reduction="mean"))
+    return out
+
+
 def _hf_datums(rows: list[dict[str, Any]], tokenizer: Any, spec, log) -> list[Any]:
     """Datums from the HF chat template, when tinker-cookbook is not installed."""
     import tinker
@@ -99,10 +124,12 @@ def run(store: JobStore, job: dict[str, Any]) -> None:
         log(f"console: {training.get_console_url()}")
     except Exception:  # noqa: BLE001 - a missing console link must not stop training
         pass
-    tokenizer = training.get_tokenizer()
-
     rows = read_examples(spec.data)
-    build = _hf_datums if missing_modules("tinker_cookbook") else _cookbook_datums
+    if tml_model(spec.base_model):  # Tinker has no tokenizer for these: get_tokenizer() raises
+        tokenizer, build = None, _tml_datums
+    else:
+        tokenizer = training.get_tokenizer()
+        build = _hf_datums if missing_modules("tinker_cookbook") else _cookbook_datums
     datums = build(rows, tokenizer, spec, log)
     log(f"{len(datums)} examples, {sum(d.model_input.length for d in datums)} tokens per epoch")
 

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,38 @@ CHARS_PER_TOKEN = 3.0
 """For the pre-launch estimate only (no tokenizer needed). Code and JSON tokenize at roughly 3 to 4
 characters per token; using the low end over-reserves rather than under-reserves the budget. The
 worker reports cost from the real token counts."""
+
+
+API_BASE = "https://tinker.thinkingmachines.dev/services/tinker-prod/api/v1"
+
+
+def preflight(timeout: float = 20) -> None:
+    """Ask Tinker whether this key may train, before starting a worker. The SDK retries a refused
+    request (an account blocked for billing answers 402) silently and forever, so a run would hang
+    with no message; this surfaces Tinker's own reason instead."""
+    import urllib.error
+    import urllib.request
+
+    key = os.environ.get(KEY_ENV, "")
+    req = urllib.request.Request(f"{API_BASE}/get_server_capabilities",
+                                 headers={"X-API-Key": key, "Authorization": f"Bearer {key}",
+                                          "User-Agent": "opentrain"})
+    try:
+        urllib.request.urlopen(req, timeout=timeout).close()  # noqa: S310 - fixed https host
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode()).get("detail") or ""
+        except (ValueError, AttributeError):
+            detail = ""
+        detail = re.sub(r"\s*\(organization:.*?\)", "", str(detail))  # keep account ids out of logs
+        if exc.code in (401, 403):
+            raise RuntimeError(f"Tinker refused the key (HTTP {exc.code}): {detail or 'check TINKER_API_KEY'}") from None
+        if exc.code == 402:
+            raise RuntimeError(f"Tinker: {detail or 'billing needs attention'} "
+                               "(https://tinker.thinkingmachines.ai/billing/balance)") from None
+        raise RuntimeError(f"Tinker answered HTTP {exc.code}: {detail or 'try again in a minute'}") from None
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise RuntimeError(f"could not reach Tinker: {getattr(exc, 'reason', exc)}") from None
 
 
 def price_per_mtok(spec: TrainSpec) -> float:
@@ -226,6 +259,7 @@ class TinkerBackend:
         ok, why = self.available()
         if not ok:
             raise RuntimeError(f"tinker backend unavailable: {why}")
+        preflight()
         if not Path(spec.data).is_file():
             raise FileNotFoundError(f"training data {spec.data} does not exist")
         price = price_per_mtok(spec)

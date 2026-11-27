@@ -97,3 +97,24 @@ def test_a_conversation_folded_into_the_prompt_counts_as_a_trace():
     assert not multi_turn(plain)
     assert multi_turn({**plain, "prompt": [*plain["prompt"], {"role": "assistant", "content": "x"},
                                            {"role": "user", "content": "y"}]})
+
+
+def test_tinker_says_why_it_refuses_instead_of_hanging(monkeypatch):
+    from opentrain.backends import tinker as tk
+
+    body = b'{"detail": "Access is blocked due to billing status. (organization: \\"someone - default org\\" tml:x)"}'
+
+    def urlopen(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 402, "x", {}, io.BytesIO(body))
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    with pytest.raises(RuntimeError, match="blocked due to billing") as e:
+        tk.preflight()
+    assert "organization" not in str(e.value)
+
+
+def test_inkling_trains_through_tml_renderers():
+    from opentrain.backends.tinker_worker import tml_model
+
+    assert tml_model("thinkingmachines/Inkling-2-Mini:peft:65536:free")
+    assert not tml_model("Qwen/Qwen3.5-4B")
