@@ -195,17 +195,79 @@ export function AgentPanel({ convo = true }: { convo?: boolean }) {
 }
 
 const STARTERS: [string, string][] = [
+  ["a small model that does my coding", "Make me a small model that does my coding work, from my coding-agent traces on this machine and the repos they touched. Show me what you find first."],
+  ["fix what my coding agent keeps getting wrong", "Look through my coding-agent traces, tell me what keeps going wrong, and train a small model that gets it right."],
   ["improve a model for my use case", "Find the best public data on Hugging Face and Kaggle and make this model better at it. Model: Qwen/Qwen3.5-4B. Use case: "],
   ["train on my data", "I have data for this (I'll drop the file in or point to it). Check how good it is, turn it into the right tasks, then train: "],
   ["find the cheapest model that does my job", "Compare a few models on my examples, including a small cheap one, and tell me which is good enough and what each costs: "],
   ["build the data with me", "Help me build a dataset for this from scratch: "],
 ];
 
+type TraceSource = { name: string; label: string; count: number; imported: number };
+type TraceView = { sources: TraceSource[]; imported: number; coding: number; examples: number;
+  repos: { repo: string; traces: number }[]; moments: Record<string, number>;
+  themes: { name: string; description: string; count: number; chosen: boolean }[] };
+
+const MOMENT: Record<string, string> = { corrected: "you corrected the agent", interrupted: "you stopped it",
+  failing_check: "a check kept failing", churn: "same file edited over and over", tool_errors: "tool errors" };
+
+// Like Paxel: show what coding-agent traces this machine has, import them locally, then what went wrong.
+export function TracesPanel() {
+  const [v, setV] = useState<TraceView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => { api.get<TraceView>("/api/traces").then(setV).catch(() => {}); }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => events.on((e: any) => { if (e?.type?.startsWith?.("job")) load(); }), [load]);
+  if (!v) return null;
+  const found = v.sources.filter((s) => s.count > 0);
+  if (!found.length) return null;
+  const doImport = async () => {
+    setBusy(true);
+    try { await api.post("/api/traces/import", {}); } catch (e) { toastError(e); } finally { setBusy(false); }
+  };
+  const choose = async (name: string) => {
+    const chosen = v.themes.filter((t) => (t.name === name ? !t.chosen : t.chosen)).map((t) => t.name);
+    try { await api.post("/api/traces/themes", { chosen }); load(); } catch (e) { toastError(e); }
+  };
+  const moments = Object.entries(v.moments || {}).filter(([, n]) => n > 0);
+  return (
+    <div className="traces">
+      <div className="traces-k">your coding traces · on this machine</div>
+      <div className="traces-found">
+        {found.map((s) => (
+          <span key={s.name}><b>{s.count.toLocaleString()}</b> {s.label}{s.imported ? <span className="faint"> · {s.imported} imported</span> : null}</span>
+        ))}
+      </div>
+      {v.imported ? (
+        <div className="traces-sum">
+          <span><b>{v.coding}</b> changed code</span>
+          <span>in <b>{v.repos.length}</b> repos</span>
+          <span><b>{v.examples}</b> training examples</span>
+          {moments.map(([k, n]) => <span key={k} className="faint">{n} × {MOMENT[k] || k}</span>)}
+        </div>
+      ) : (
+        <button className="btn" disabled={busy} onClick={doImport}>{busy ? "importing…" : "import (stays on this machine)"}</button>
+      )}
+      {v.themes.length > 0 && (
+        <div className="traces-themes">
+          <div className="faint small">what keeps going wrong · pick what to fix</div>
+          {v.themes.map((t) => (
+            <label key={t.name} className="theme" title={t.description}>
+              <input type="checkbox" checked={t.chosen} onChange={() => choose(t.name)} /> {t.name} <span className="faint">· seen {t.count}×</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentHello() {
   return (
     <div className="hello">
       <pre className="logo">{"opentrain"}</pre>
       <p>What should your model get better at?</p>
+      <TracesPanel />
       <div className="starters">
         {STARTERS.map(([t, text], i) => (
           <button key={t} className="starter" onClick={() => fillComposer(text)}>

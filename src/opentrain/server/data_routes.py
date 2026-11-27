@@ -19,13 +19,14 @@ MAX_UPLOAD = 30 * 1024 * 1024
 
 def _guard(fn, *a, **kw):
     from ..core.complete import CompletionError
+    from ..core.tool import ToolError
     from ..datasets import DatasetError
     from ..graders import GraderError
     from ..registry import RegistryError
 
     try:
         return fn(*a, **kw)
-    except (DatasetError, GraderError, CompletionError, RegistryError) as exc:
+    except (DatasetError, GraderError, CompletionError, RegistryError, ToolError) as exc:
         raise ApiError(400, str(exc)) from None
 
 
@@ -305,3 +306,53 @@ async def board_grid(request: web.Request):
         return ok(await asyncio.to_thread(grid, p.state, name, reveal=request.query.get("reveal") == "1"))
     except DatasetError as exc:
         raise ApiError(404, str(exc)) from None
+
+
+# ------------------------------------------------------------------ coding-agent traces
+
+
+def _trace_ctx(request, session_id: str | None = None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(project=project_of(request), session_id=session_id)
+
+
+@routes.get("/api/traces")
+async def traces_view(request: web.Request):
+    """What the web app's traces panel shows: every agent's logs found here, what was imported, themes."""
+    from ..core.tools import coding
+
+    ctx = _trace_ctx(request)
+    scan = await _run(coding.traces_scan, ctx)
+    d = ctx.project.state / "traces"
+    index = coding._read_jsonl(d / "index.jsonl")
+    coding_rows = [r for r in index if r.get("edits")]
+    repos: dict[str, int] = {}
+    for r in coding_rows:
+        if r.get("repo"):
+            repos[r["repo"]] = repos.get(r["repo"], 0) + 1
+    moments: dict[str, int] = {}
+    for r in index:
+        for k, v in (r.get("moments") or {}).items():
+            moments[k] = moments.get(k, 0) + v
+    return ok({"sources": scan["sources"], "imported": len(index), "coding": len(coding_rows),
+               "examples": sum(r.get("examples", 0) for r in index),
+               "repos": sorted(({"repo": k, "traces": v} for k, v in repos.items()), key=lambda x: -x["traces"])[:12],
+               "moments": moments, "themes": coding.themes(ctx)["themes"]})
+
+
+@routes.post("/api/traces/import")
+async def traces_import_route(request: web.Request):
+    from ..core.tools import coding
+
+    b = await body_of(request)
+    res = await _run(coding.traces_import, _trace_ctx(request, b.get("session_id")), b.get("sources"), b.get("since"))
+    return ok({"job_id": res.metadata.get("job_id")})
+
+
+@routes.post("/api/traces/themes")
+async def traces_themes_route(request: web.Request):
+    from ..core.tools import coding
+
+    b = await body_of(request)
+    return ok(await _run(coding.themes_choose, _trace_ctx(request), [str(n) for n in b.get("chosen") or []]))

@@ -157,15 +157,26 @@ class Server:
         return {"teacher": who, "attempts": len(atts), "passed": sum(a.passed is True for a in atts),
                 "never_passed": fr.none_passed, "always_passed": fr.all_passed, "rates": fr.rates}
 
-    def t_data_build(self, task_ids: list[str] | None = None) -> Any:
+    def t_data_build(self, task_ids: list[str] | None = None, traces: str = "auto") -> Any:
+        """``traces``: "auto" (imported trace examples when there are any), "all", "themes" (only requests
+        a chosen theme points at), or "none". Teacher passes on training tasks always come first."""
+        from .core.tools.coding import public_examples, trace_examples
         from .data.sft import build_sft
         from .sample import load_attempts, shortest
 
         chosen = shortest(load_attempts(self.state, task_ids))
-        if not chosen:
-            raise ToolError("no verified passes yet; run sample_run first")
-        m = build_sft(chosen, self.state, run=self.run)
-        return {k: m[k] for k in ("file", "examples", "sha256", "skipped")}
+        extra, dropped = ([], {}) if traces == "none" else trace_examples(self.state, themes_only=traces == "themes")
+        public = [] if traces == "none" else public_examples(self.state)
+        extra = extra + public
+        if not chosen and not extra:
+            raise ToolError("no verified passes and no imported trace examples yet; run sample_run, or traces_import")
+        m = build_sft(chosen, self.state, run=self.run, extra=extra)
+        out = {k: m[k] for k in ("file", "examples", "sha256", "skipped")}
+        out["from_teacher"], out["from_traces"] = m["examples"] - len(extra), len(extra) - len(public)
+        out["from_public"] = len(public)
+        if dropped:
+            out["traces_left_out"] = dropped
+        return out
 
     def t_train_launch(self, epochs: int | None = None, lora_rank: int | None = None,
                        learning_rate: float | None = None, method: str | None = None,
@@ -278,11 +289,43 @@ class Server:
         get_backend(self._job_event(job_id)["backend"], self.state).cancel(job_id)
         return {"cancelling": job_id}
 
+    def _base_runner(self):
+        """The untrained student (the Trainfile's base model) on its trainer's serving, as a coding agent."""
+        from .runtime import DirectRunner
+        from .serving import ServingError
+
+        base, trainer = self.tf.base_model, self.tf.trainer
+        try:
+            if trainer == "modal":
+                from .backends import modal_backend
+
+                ep = modal_backend.endpoint(base)
+                modal_backend.wait_ready(ep)
+            elif trainer == "runpod":
+                from .backends import runpod_backend
+
+                ep = runpod_backend.endpoint(base)
+            else:
+                raise ToolError(f"scoring the untrained {base} needs it served on modal or runpod; the trainer is "
+                                f"{trainer}")
+        except (ServingError, RuntimeError) as exc:
+            raise ToolError(f"could not serve {base}: {exc}") from None
+        return DirectRunner(ep, max_steps=60, name=f"base:{base}")
+
     def _scores(self, version: str) -> list[gate_mod.Score]:
         from .engine import baseline_name, specialist_runner
         from .evaluator import EvalBroken
 
         reg = Registry(self.state)
+        if version == "base":
+            ev = Evaluator(self.state, self.tf.eval_cap)
+            name = f"base:{self.tf.base_model}"
+            try:
+                scores = ev.request(self._base_runner(), name, self.run)
+            except (EvalCapReached, EvalBroken) as exc:
+                raise ToolError(str(exc)) from None
+            ev.save_scores(name, scores)
+            return scores
         if version == baseline_name(self.tf, reg):
             raise ToolError(f"{version} is the live version; its scores are the baseline and are not re-requested here")
         ev = Evaluator(self.state, self.tf.eval_cap)

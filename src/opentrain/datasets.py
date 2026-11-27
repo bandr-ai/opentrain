@@ -284,6 +284,18 @@ def search_kaggle(query: str, limit: int = 8, fetch=_get_json) -> list[dict[str,
     return out
 
 
+def _dtype(feature: Any) -> str:
+    """A column's type as Hugging Face describes it (a list feature is a JSON list, not a dict)."""
+    if isinstance(feature, list):
+        return f"list[{_dtype(feature[0])}]" if feature else "list"
+    if isinstance(feature, dict):
+        if feature.get("dtype") or feature.get("_type") not in (None, "Sequence", "List", "LargeList"):
+            return str(feature.get("dtype") or feature.get("_type"))
+        inner = feature.get("feature")
+        return f"list[{_dtype(inner)}]" if inner is not None else "struct"
+    return str(feature)
+
+
 def peek_hf(dataset: str, fetch=_get_json) -> dict[str, Any]:
     """Before importing: configs and splits with row counts, the columns, and three example rows."""
     q = urllib.parse.quote
@@ -291,7 +303,7 @@ def peek_hf(dataset: str, fetch=_get_json) -> dict[str, Any]:
     if not info:
         raise DatasetError(f"Hugging Face shows nothing for {dataset!r} (private, gated or not converted)")
     configs = {name: {"splits": {k: v.get("num_examples") for k, v in (c.get("splits") or {}).items()},
-                      "columns": {k: (v.get("dtype") or v.get("_type")) for k, v in (c.get("features") or {}).items()}}
+                      "columns": {k: _dtype(v) for k, v in (c.get("features") or {}).items()}}
                for name, c in list(info.items())[:8]}
     first = next(iter(configs))
     split = "train" if "train" in configs[first]["splits"] else next(iter(configs[first]["splits"]), "train")

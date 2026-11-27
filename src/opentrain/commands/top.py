@@ -26,7 +26,7 @@ from typing import Any
 
 from .. import __version__
 
-VERBS = ("run", "serve", "web", "mcp", "login", "attach", "pair", "stop", "export", "watch", "model", "debug", "help")
+VERBS = ("run", "serve", "web", "mcp", "login", "traces", "attach", "pair", "stop", "export", "watch", "model", "debug", "help")
 
 
 def _client(directory: Path, url: str | None = None, password: str | None = None):
@@ -450,6 +450,13 @@ def parser() -> argparse.ArgumentParser:
     lg.add_argument("--no-open", action="store_true", help="print the link only")
     lg.set_defaults(fn=cmd_login)
 
+    tr = sub.add_parser("traces", help="every coding agent's logs on this machine: what is there, and import it")
+    tr.add_argument("--import", dest="do_import", action="store_true",
+                    help="read and index them into this project (local; credentials scrubbed)")
+    tr.add_argument("--dir", default=".", help="the project to import into (default: here)")
+    tr.add_argument("--since", default=None, help="only logs since this date (ISO)")
+    tr.set_defaults(fn=cmd_traces)
+
     at = sub.add_parser("attach", help="the terminal app against a server elsewhere")
     at.add_argument("url")
     at.add_argument("--password", default=None)
@@ -480,6 +487,38 @@ def parser() -> argparse.ArgumentParser:
 
     sub.add_parser("debug", help="every pipeline step on its own: opentrain debug --help")
     return p
+
+
+def cmd_traces(a) -> int:
+    """Like Paxel: find every coding agent's logs, say what is there, and (with --import) index them."""
+    from ..traces.readers import scan
+
+    rows = scan()
+    found = [r for r in rows if r.get("count")]
+    if not found:
+        print("No coding-agent logs found on this machine.")
+        return 0
+    print("Coding-agent logs on this machine\n")
+    for r in rows:
+        where = ", ".join(str(x) for x in (r.get("roots") or [])[:1])
+        print(f"  {r['label']:<16} {r.get('count', 0):>6}   {where if r.get('count') else ''}")
+    if not a.do_import:
+        print("\nopentrain traces --import   reads them here (nothing is uploaded) and shows what can be trained on")
+        return 0
+    from ..core.tools.coding import import_traces
+
+    state = Path(a.dir).resolve() / ".opentrain"
+    print(f"\nImporting into {state} ...", flush=True)
+    r = import_traces(state, since=a.since, progress=lambda f, t: print(f"  {t}", flush=True) if f is None else None)
+    print(f"\n  {r['traces']} traces read ({r['unreadable']} unreadable)")
+    for agent, n in r["by_agent"].items():
+        print(f"    {agent:<14} {n:>6}   {r['coding_by_agent'].get(agent, 0)} changed code")
+    print(f"  {r['coding_traces']} changed code, in {r['repos']} repos")
+    print(f"  {r['examples']} training examples in the trained model's tools")
+    if r["moments"]:
+        print("  where something went wrong: " + ", ".join(f"{n} {k}" for k, n in r["moments"].items()))
+    print("\nNext: opentrain web, and ask for a small model that does your coding.")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

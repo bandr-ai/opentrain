@@ -12,8 +12,13 @@ one proposed step, with its price, to approve, change or skip.
 $ opentrain web        # the web app (or: opentrain, for the terminal app)
 ```
 
-- **Two ways in.** Bring your data (traces, Q&A, documents, a CSV) and the agent checks how good
-  it is and turns it into the right tasks; or name a model and a use case and it finds the best
+- **A small model that does your coding.** OpenTrain finds every coding agent's logs on your machine
+  (Claude Code, Codex, Cursor, opencode, Gemini CLI, Cline, Aider, pi, Copilot), imports them locally,
+  shows you where they went wrong so you pick what to fix, builds tasks your repos' tests decide, and
+  trains a small model (Inkling 2 Mini, Qwen3.5, Qwen3.8-27B, ...) that has to prove itself on tasks
+  it never saw.
+- **Or any other use case.** Bring your data (traces, Q&A, documents, a CSV) and the agent checks how
+  good it is and turns it into the right tasks; or name a model and a use case and it finds the best
   public data on Hugging Face and Kaggle. Either way you get a sealed eval set and a plan.
 - **Any way of checking an answer.** Exact, contains, a pattern, JSON, a number, a model judge with
   your rubric, your own script, or your environment as a Python `reward()`.
@@ -41,7 +46,30 @@ Python 3.11+. The engine runs on whatever you already have: your own **Claude Co
 needed), or an Anthropic, OpenAI, OpenRouter, Together, Groq or Fireworks key, or a local model.
 `/connect` adds keys; `/models` picks one.
 
-## Two ways in
+## Ways in
+
+**"Make me a small model that does my coding."** (`goal/coding`)
+
+1. *What you have.* `traces_scan` finds every coding agent's logs on this machine and counts them;
+   `traces_import` reads them here (credentials scrubbed, nothing uploaded): which repos, which
+   requests changed code, training examples in the trained model's tools, and the moments where
+   something went wrong. The start screen of the web app shows the same, with one import button.
+2. *What to fix.* The agent reads those moments in batches (`data/diagnose`): you corrected it, you
+   stopped it, a check kept failing, a file was edited over and over. It names the themes in your
+   words ("uses the old auth API") and you tick the ones the model should get right.
+3. *Tasks your tests decide.* Sessions that ended in a commit with tests (`tasks_mine`), and the
+   repos' own commits that changed code and tests (`tasks_from_history`), each rewritten by Claude
+   into the request a person would have typed, without the answer. Every task is certified
+   (reference passes, doing nothing fails) and the newest are held out.
+4. *Data.* Claude's shortest verified run on each training task, your own traces (minus anything
+   from the held-out period), and public trajectories when yours are few
+   (`coding_data_import`: SWE-smith, SWE-Gym, R2E-Gym). One format: the trained model's five tools.
+5. *A student.* `opentrain.models`: Inkling 2 Mini on Tinker; Qwen3.5 4B/9B on your Modal or RunPod;
+   Qwen3.8-27B or Qwen3.6-35B-A3B in the middle; Inkling-Small on Tinker when small falls short.
+   Each comes with its trainer, serving flags and price.
+6. *Proof.* Held-out tasks for what you use today, the untrained student (`eval_request base`) and
+   each trained version: pass rate, time and cost per task. The gate ships a version only when it
+   wins with nothing regressing.
 
 **"Here is my data."** Drop a file or name one. The agent reads it in batches until it can say how
 good it is (`data/triage`: what share of rows are right, the top problems with examples) and
@@ -281,6 +309,10 @@ are in [docs/RECIPES.md](docs/RECIPES.md).
 | Web app | Driven end to end in a browser: upload, grading, a live eval, chat with approvals |
 | Terminal app, `run`, `attach` | Tested (Textual pilot and live server) |
 | Mining tasks from Claude Code sessions | Runs on real logs; yield on real sessions is low (see docs/FINDINGS.md) |
+| Tasks from repo history | Run on this repo: 3 of 4 candidate commits certified; Claude's rewrite of a commit into a request read well |
+| Trace readers (Claude Code, Codex, opencode, Gemini CLI, Cursor, Cline, Aider, pi, Copilot) | Claude Code and Codex read on real logs; the others tested on synthetic logs written from their documented formats |
+| Public coding trajectories (SWE-smith, SWE-Gym, R2E-Gym) | Converted live from Hugging Face samples: 73 examples from 90 rows |
+| A trained coding model, served with tool calls, scored on held-out tasks | Written; **no live run yet** |
 | Modal training and serving | **Run live**: Qwen2.5-0.5B on 54 rows, 28 steps on an L40S in 30 s for $0.02; held-out 42% → 100% (docs/RECIPES.md) |
 | Claude Code over MCP (`opentrain mcp`) | **Run live**: Claude Code evaluated, trained, waited and promoted through the tools |
 | Rejection sampling, on-policy distillation, RL on Modal | **Run live** on GSM8K with Qwen2.5-0.5B: each a few steps on an L40S for about $0.10 (smoke tests, not results); RL with a `python` reward too |

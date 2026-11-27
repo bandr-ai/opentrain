@@ -282,8 +282,8 @@ def sample_run(ctx: ToolContext, task_ids: list[str] | None = None, n: int = 4, 
                                            run_id=srv.run.run_id, summarize=summary), "sampling")
 
 
-def data_build(ctx: ToolContext, task_ids: list[str] | None = None) -> Any:
-    return _refuse(_server(ctx).t_data_build)(task_ids)
+def data_build(ctx: ToolContext, task_ids: list[str] | None = None, traces: str = "auto") -> Any:
+    return _refuse(_server(ctx).t_data_build)(task_ids, traces)
 
 
 def train_estimate(ctx: ToolContext, epochs: int | None = None, lora_rank: int | None = None,
@@ -518,8 +518,10 @@ def tools() -> list[Tool]:
           "verified. Metered against the budget.",
           S({"task_ids": ids, "n": {"type": "integer"}, "teacher": {"type": "string", "enum": ["frontier", "base"]}}),
           sample_run, permission=lambda a: [("spend", f"sampling ×{a.get('n', 4)}")]),
-        T("data_build", "Build the training set: the shortest verified pass per task (data/shortest).",
-          S({"task_ids": ids}), data_build),
+        T("data_build", "Build the training set: the shortest verified teacher pass per task (data/shortest), plus "
+          "imported trace examples (traces: auto|all|themes|none). Trace examples from on or after the held-out "
+          "cutoff, or from a held-out task's session, are left out.",
+          S({"task_ids": ids, "traces": {"type": "string", "enum": ["auto", "all", "themes", "none"]}}), data_build),
         T("train_estimate", "Estimated cost of training on the current data, what would be uploaded, budget left.",
           S({"epochs": {"type": "integer"}, "lora_rank": {"type": "integer"}}), train_estimate),
         T("job_start", "Launch training on the Trainfile's trainer and base model. Asks the user before uploading and "
@@ -537,7 +539,8 @@ def tools() -> list[Tool]:
         T("job_stop", "Cancel a job.", S({"job_id": {"type": "string"}}, ["job_id"]), job_stop,
           permission=lambda a: [("job.stop", a["job_id"])]),
         T("eval_request", "Job: the evaluator scores a version on held-out tasks (pass/fail and time per task id, "
-          "never content). Capped per run.", S({"version": {"type": "string"}}, ["version"]), eval_request),
+          "never content). Capped per run. version='base' scores the untrained base model (Trainfile base_model, "
+          "served on the modal or runpod trainer) as the small-model baseline.", S({"version": {"type": "string"}}, ["version"]), eval_request),
         T("version_propose", "Submit a scored version to the promotion gate. The gate decides and deploys.",
           S({"version": {"type": "string"}}, ["version"]), version_propose,
           permission=lambda a: [("promote", a["version"])]),

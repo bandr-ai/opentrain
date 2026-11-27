@@ -111,7 +111,12 @@ def specialist_runner(version: Version, *, max_steps: int = 60) -> AgentRunner:
     from .runtime import DirectRunner
     from .serving import endpoint_for
 
-    return DirectRunner(endpoint_for(version), max_steps=max_steps, name=version.model_name)
+    ep = endpoint_for(version)
+    if version.backend == "modal":  # scaled to zero: wait out the cold start once, not inside every attempt
+        from .backends import modal_backend
+
+        modal_backend.wait_ready(ep)
+    return DirectRunner(ep, max_steps=max_steps, name=version.model_name)
 
 
 def baseline_name(tf: Trainfile, registry: Registry) -> str:

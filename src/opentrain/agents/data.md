@@ -14,6 +14,15 @@ permissions:
   "write": allow
   "status": allow
   "sessions_scan": allow
+  "traces_scan": allow
+  "traces_import": allow
+  "traces.read": allow
+  "traces": allow
+  "trace_show": allow
+  "moments": allow
+  "themes": allow
+  "themes_set": allow
+  "tasks_from_history": allow
   "tasks_mine": allow
   "tasks_list": allow
   "task_show": allow

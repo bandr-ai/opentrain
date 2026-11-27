@@ -8,9 +8,10 @@ from typing import Any
 
 
 def register_all(project: Any) -> None:
-    from . import data, general, train
+    from . import coding, data, general, train
 
     reg = project.services["tools"]
     reg.add(*general.tools())
     reg.add(*data.tools())
     reg.add(*train.tools())
+    reg.add(*coding.tools())

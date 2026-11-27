@@ -42,7 +42,12 @@ What the tools are for:
 - training: trainer_set (where and what), dataset_recipe (task kind, a plan of methods sft / opd /
   rl / rejection, settings, and the price), dataset_train, then dataset_eval the new version and
   dataset_promote (the gate decides).
-- skills (the skill tool) are playbooks to adapt: data/find (a use case, no data), data/tasks
+- coding work (a small model that does the user's own coding): traces_scan / traces_import (every
+  coding agent's logs on this machine, read locally), moments + themes_set / themes_choose (what
+  went wrong, which the user picks), tasks_mine and tasks_from_history (verified tasks from sessions
+  and the repos' commits), sample_run, data_build, job_start, eval_request (a version, or base),
+  version_propose. Playbook: goal/coding.
+- skills (the skill tool) are playbooks to adapt: goal/coding, data/diagnose, data/history, data/find (a use case, no data), data/tasks
   (the user's own data or documents), data/triage (is this data good enough), train/env (a reward
   for RL).
 
