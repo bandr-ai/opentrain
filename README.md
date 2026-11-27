@@ -53,17 +53,19 @@ Beta users: start with [docs/BETA.md](https://github.com/bandr-ai/opentrain/blob
 
 **"Make me a small model that does my coding."** (`goal/coding`)
 
-1. *What you have.* `traces_scan` finds every coding agent's logs on this machine and counts them;
-   `traces_import` reads them here (credentials scrubbed, nothing uploaded): which repos, which
-   requests changed code, training examples in the trained model's tools, and the moments where
-   something went wrong. The start screen of the web app shows the same, with one import button.
+1. *What you have.* `opentrain traces` (or `uvx opentrain-cli traces`) finds every coding agent's
+   logs on this machine and reads them here (credentials scrubbed, nothing uploaded): real work
+   sessions apart from one-shot `claude -p` runs, which requests changed code (edit tools or the
+   shell), how each ended (committed, checks passing, pushback, stopped), and moments worth a look.
+   The start screen of the web app shows the same, with one import button.
 2. *What to fix.* The agent reads those moments in batches (`data/diagnose`): you corrected it, you
    stopped it, a check kept failing, a file was edited over and over. It names the themes in your
    words ("uses the old auth API") and you tick the ones the model should get right.
-3. *Tasks your tests decide.* Sessions that ended in a commit with tests (`tasks_mine`), and the
-   repos' own commits that changed code and tests (`tasks_from_history`), each rewritten by Claude
-   into the request a person would have typed, without the answer. Every task is certified
-   (reference passes, doing nothing fails) and the newest are held out.
+3. *Tasks, each with a check.* Sessions that ended in a commit (`tasks_mine`) and the repos' own
+   commits (`tasks_from_history`), each rewritten by Claude into the request a person would have
+   typed, without the answer. The check is the strongest one the repo allows: its tests, tests
+   written for the task, or a judge comparing the change with the real one after a build or type
+   check. Every task is certified (reference passes, doing nothing fails) and the newest are held out.
 4. *Data.* Claude's shortest verified run on each training task, your own traces (minus anything
    from the held-out period), and public trajectories when yours are few
    (`coding_data_import`: SWE-smith, SWE-Gym, R2E-Gym). One format: the trained model's five tools.

@@ -30,6 +30,7 @@ from .bench.yield_ import Verdict
 from .mine import MineError, mine_one
 from .sessions.model import Session
 
+DOCS = re.compile(r"(\.(md|mdx|rst|txt|png|jpe?g|gif|svg|lock)$|(^|/)(docs?|LICENSE|CHANGELOG)\b)", re.IGNORECASE)
 MIN_WORDS = 4
 MAX_LINES = 600
 MAX_FILES = 25
@@ -45,7 +46,9 @@ def default_author(repo: str) -> str | None:
 
 
 def candidates(repo: str, *, author: str | None = None, since: str | None = None,
-               limit: int = 40) -> tuple[list[dict[str, Any]], Counter]:
+               limit: int = 40, judge: bool = False) -> tuple[list[dict[str, Any]], Counter]:
+    """With ``judge``, a commit that changed code but no tests is a candidate too, verified by a judge
+    (``opentrain.judge``) instead of tests."""
     """Commits that could become tasks, newest first, and why the others could not."""
     args = ["log", "--no-merges", "--format=%x1e%H%x1f%P%x1f%aI%x1f%B%x1f", "--numstat"]
     if author:
@@ -68,19 +71,19 @@ def candidates(repo: str, *, author: str | None = None, since: str | None = None
                 files.append(parts[2])
                 lines += sum(int(x) for x in parts[:2] if x.isdigit())
         tests = [f for f in files if TEST_FILE.search(f)]
-        code = [f for f in files if f not in tests]
+        code = [f for f in files if f not in tests and not DOCS.search(f)]
         msg = message.strip()
-        if not tests:
+        if not tests and not judge:
             skipped["no test change"] += 1
         elif not code:
-            skipped["tests only"] += 1
+            skipped["tests or docs only"] += 1
         elif len(msg.split()) < MIN_WORDS:
             skipped["message too short to be an instruction"] += 1
         elif lines > MAX_LINES or len(files) > MAX_FILES:
             skipped["change too large"] += 1
         else:
             out.append({"repo": repo, "commit": sha, "parent": parents.split()[0], "at": when, "message": msg,
-                        "files": len(files), "lines": lines})
+                        "files": len(files), "lines": lines, "judged": not tests})
             if len(out) >= limit:
                 break
     return out, skipped
@@ -132,9 +135,11 @@ def verdict_for(c: dict[str, Any]) -> Verdict:
 
 def mine_history(state: Path, repos: list[str], *, author: str | None = None, since: str | None = None,
                  limit: int = 40, timeout: float = 600, rewrite_with: str | None = "claude-code/sonnet",
-                 say=None) -> dict[str, Any]:
+                 verifier: str = "auto", checks: list[str] | None = None, say=None) -> dict[str, Any]:
     """Build and certify tasks from each repo's commits; one row per commit tried. ``rewrite_with``
-    names the model that turns each commit into a request (None: the stripped message as is)."""
+    names the model that turns each commit into a request (None: the stripped message as is).
+    ``verifier``: "auto" (the commit's tests when it changed tests, else a judge), "tests" or "judge";
+    ``checks``: commands a judged change must also pass (a build, a type check)."""
     rows: list[dict[str, Any]] = []
     skipped: Counter = Counter()
     per_repo = max(1, limit // max(1, len(repos)))
@@ -143,7 +148,10 @@ def mine_history(state: Path, repos: list[str], *, author: str | None = None, si
             rows.append({"repo": repo, "outcome": "rejected", "reason": "not a git repo"})
             continue
         who = author if author is not None else default_author(repo)
-        found, why = candidates(repo, author=who or None, since=since, limit=per_repo)
+        found, why = candidates(repo, author=who or None, since=since, limit=per_repo, judge=verifier != "tests")
+        if verifier == "judge":
+            for c in found:
+                c["judged"] = True
         skipped.update(why)
         if say:
             say(f"{Path(repo).name}: {len(found)} commits with code and tests to certify")
@@ -155,7 +163,9 @@ def mine_history(state: Path, repos: list[str], *, author: str | None = None, si
                         c["instruction"] = rewrite(c, rewrite_with)
                     except Exception as exc:  # noqa: BLE001 - fall back to the message, and say so
                         base["rewrite"] = f"kept the commit message ({type(exc).__name__}: {str(exc)[:120]})"
-                rows.append({**base, **mine_one(verdict_for(c), state, timeout)})
+                base["verifier"] = "judge" if c.get("judged") else "tests"
+                rows.append({**base, **mine_one(verdict_for(c), state, timeout, judged=bool(c.get("judged")),
+                                                checks=checks if c.get("judged") else None)})
             except MineError as exc:
                 rows.append({**base, "outcome": "rejected", "reason": exc.reason, "detail": exc.detail})
             except Exception as exc:  # one odd commit must not cost the batch

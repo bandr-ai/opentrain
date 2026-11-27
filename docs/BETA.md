@@ -16,7 +16,9 @@ send feedback.
     Inkling 2 Mini has a free tier (64K context, rate-limited): base model
     `thinkingmachines/Inkling-2-Mini:peft:65536:free`.
   - or RunPod: `opentrain login runpod`.
-- For coding: repos with tests that run on your machine. The tests decide every task.
+- For coding: repos you work in, checked out on your machine. Where a repo has tests that run here,
+  they check each task; where it does not, a judge compares the model's change with the real one
+  (after the checks you name, like a build or a type check), and the scorecard says which.
 
 ## First look (one command, nothing to install)
 

@@ -13,7 +13,9 @@ The repos those sessions touched hold many more such changes.
 1. `tasks_from_history` (default repos: those the imported traces worked in; or `repos=[...]`).
    `author` defaults to the repo's configured git email, so the tasks are the person's own work;
    pass `author=""` for everyone's. `since` keeps it recent.
-2. Each commit: environment = the repo at its parent; verifier = its test files at the commit;
+2. Each commit: environment = the repo at its parent; verifier = its test files at the commit, or,
+   for a commit without test changes (verifier auto or judge), a judge comparing the attempt with the
+   commit's change after `checks` pass;
    instruction = the commit rewritten by claude-code/sonnet into the request a person would type,
    without the solution (`rewrite=false` keeps the stripped message). It is certified like a
    session task (reference passes, doing nothing fails, a partial answer fails) before it counts.

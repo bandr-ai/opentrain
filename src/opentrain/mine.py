@@ -32,6 +32,7 @@ from typing import Any
 from .bench.gitstate import TEST_FILE
 from .bench.yield_ import Verdict as YieldVerdict
 from .certify import run_controls
+from .judge import JUDGE, is_judged
 from .sessions.claude_code import TEST_COMMAND
 from .tasks import Controls, HeldoutStore, Store, Task, TaskRejected, read_task, task_toml
 from .workspace import reference_patch
@@ -332,7 +333,8 @@ git apply --whitespace=nowarn "$HERE/solution.patch"
 """
 
 
-def mine(verdict: YieldVerdict, out_dir: Path, test_command: str | None = None) -> Path:
+def mine(verdict: YieldVerdict, out_dir: Path, test_command: str | None = None, *,
+         checks: list[str] | None = None) -> Path:
     """Build the task folder for one judged session under ``out_dir``; return the folder.
 
     Raises :class:`MineError` when the session cannot become a task. ``test_command`` overrides
@@ -349,7 +351,10 @@ def mine(verdict: YieldVerdict, out_dir: Path, test_command: str | None = None) 
         raise MineError("no reference", "the edits were never committed")
     changed = _git(rs.root, "diff", "--name-only", "--no-renames", rs.base_commit, rs.reference_commit).splitlines()
     test_files = tuple(f for f in changed if TEST_FILE.search(f))
-    command, source = (test_command, "narrowed") if test_command else _command(verdict, test_files)
+    if test_command and is_judged(test_command):
+        command, source = test_command, "judge"
+    else:
+        command, source = (test_command, "narrowed") if test_command else _command(verdict, test_files)
     task = Task(
         task_id=task_id(verdict),
         instruction=compose_instruction(s.prompts, s.instruction)[0],
@@ -389,7 +394,8 @@ def mine(verdict: YieldVerdict, out_dir: Path, test_command: str | None = None) 
     for sh in (folder / "tests" / "test.sh", folder / "solution" / "solve.sh"):
         sh.chmod(0o755)
     meta = {"test_command_source": source, "instruction_source": compose_instruction(s.prompts, s.instruction)[1],
-            "session_path": s.path, "agent": s.agent,
+            "session_path": s.path, "agent": s.agent, "verifier": "judge" if source == "judge" else "tests",
+            **({"checks": list(checks)} if checks else {}),
             "yield": "verified" if verdict.verified else f"repairable ({verdict.skip})"}
     (folder / "meta.json").write_text(json.dumps(meta, indent=2))
     return folder
@@ -410,7 +416,8 @@ def _rejection(c: Controls) -> tuple[str, str]:
     return "controls failed: wrong passes", c.detail
 
 
-def mine_one(v: YieldVerdict, state: Path, timeout: float = 900) -> dict[str, Any]:
+def mine_one(v: YieldVerdict, state: Path, timeout: float = 900, *, judged: bool = False,
+             checks: list[str] | None = None) -> dict[str, Any]:
     """Build, certify (narrowing once if doing nothing passes) and store one session's task."""
     tid = task_id(v)
     if tid in HeldoutStore(state) or tid in Store(state):
@@ -423,7 +430,7 @@ def mine_one(v: YieldVerdict, state: Path, timeout: float = 900) -> dict[str, An
             if existing.source_session == sid:
                 return {"outcome": "kept", "task_id": existing.task_id, "reason": "session already mined"}
     with tempfile.TemporaryDirectory(prefix="ot-mine-") as tmp:
-        folder = mine(v, Path(tmp))
+        folder = mine(v, Path(tmp), JUDGE if judged else None, checks=checks)
         task = read_task(folder)
         controls, runs = run_controls(task, _patch(folder), timeout)
         narrowed_from = None
@@ -431,7 +438,7 @@ def mine_one(v: YieldVerdict, state: Path, timeout: float = 900) -> dict[str, An
         # A reference that fails on tests may only be failing tests the change never touched
         # (a suite needing a database, a known-flaky test). The changed test files alone may hold.
         ref_failed = not controls.reference and runs.get("reference") and runs["reference"].kind == "tests"
-        if noop_passed or ref_failed:
+        if (noop_passed or ref_failed) and not judged:
             narrowed = narrow_command(task.test_command, task.test_files)
             if narrowed and narrowed != task.test_command:
                 folder = mine(v, Path(tmp), test_command=narrowed)

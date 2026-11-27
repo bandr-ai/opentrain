@@ -216,6 +216,10 @@ def overlay_tests(task: Task, workspace: Path) -> None:
 
 
 def run_tests(task: Task, workspace: Path, timeout: float = 900) -> Verdict:
+    from .judge import is_judged, verdict
+
+    if is_judged(task.test_command):  # no tests in the repo: checks plus a judge (opentrain.judge)
+        return verdict(task, workspace, timeout)
     overlay_tests(task, workspace)
     start = time.monotonic()
     env = {**os.environ, "CI": "1", "PYTHONDONTWRITEBYTECODE": "1"}

@@ -26,11 +26,16 @@ Read `moments` in batches and name the recurring themes in their words. `themes_
 `themes_choose` records the answer. Chosen themes decide which traces matter most and which
 held-out tasks the report breaks out.
 
-## 3. Tasks the tests decide (skills cl/mine, data/history)
+## 3. Tasks, and what checks them (skills cl/mine, data/history)
 
+The verifier is chosen per task, strongest first: the repo's tests; tests you write for the task
+(`task_add` accepts them only when the reference passes and doing nothing fails); a judge comparing
+the change with the real one, after the checks the work must not break (a build, a type check).
 - `tasks_mine` (`include_repairable=true`): tasks from traces that ended in a commit with tests.
-- `tasks_from_history`: tasks from the repos' own commits that changed code and tests, each
-  rewritten into the request a person would type (free on their Claude login).
+- `tasks_from_history` (verifier auto): tasks from the repos' own commits, each rewritten into the
+  request a person would type (free on their Claude login); the commit's tests check it when it
+  changed tests, a judge otherwise (pass `checks` such as the repo's type check or build).
+- Say how many tasks each kind of verifier checks; a judge is weaker proof than tests.
 - Check the split (`status`, `tasks_list`): the newest tasks are held out. Under ~10 held-out
   tasks a pass-rate difference of one or two tasks is noise; mine more before claiming anything.
 
