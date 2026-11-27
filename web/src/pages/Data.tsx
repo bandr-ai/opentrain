@@ -16,6 +16,7 @@ export function NewDataset({ onClose, onCreated, initialName, tab: initialTab, f
 }) {
   const [tab, setTab] = useState<"file" | "hf" | "agent">(initialTab || "file");
   const [name, setName] = useState(initialName || (initialFile ? slug(initialFile.name) : ""));
+  const [nameTyped, setNameTyped] = useState(!!initialName); // typed by hand: stop naming it after the source
   const [description, setDescription] = useState("");
   const [file, setFile] = useState<File | null>(initialFile || null);
   const [over, setOver] = useState(false);
@@ -80,7 +81,7 @@ export function NewDataset({ onClose, onCreated, initialName, tab: initialTab, f
       {!extending && (
         <label className="field">
           <span>Name</span>
-          <input className="input mono" value={name} onChange={(e) => setName(e.target.value.toLowerCase())} placeholder="support-replies" />
+          <input className="input mono" value={name} onChange={(e) => { setNameTyped(true); setName(e.target.value.toLowerCase()); }} placeholder="support-replies" />
           {name && !NAME_RE.test(name) && <small className="err">lowercase letters, digits, dot, dash, underscore</small>}
         </label>
       )}
@@ -101,7 +102,7 @@ export function NewDataset({ onClose, onCreated, initialName, tab: initialTab, f
         <>
           <label className="field">
             <span>Dataset</span>
-            <input className="input mono" value={hf} onChange={(e) => { setHf(e.target.value); if (!name) setName(slug(e.target.value.split("/").pop() || "")); }} placeholder="openai/gsm8k" />
+            <input className="input mono" value={hf} onChange={(e) => { setHf(e.target.value); if (!nameTyped) setName(slug(e.target.value.trim().split("/").pop() || "")); }} placeholder="openai/gsm8k" />
             <small>Public datasets the Hugging Face viewer can read. Nothing is uploaded.</small>
           </label>
           <div className="grid2">
