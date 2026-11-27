@@ -112,7 +112,7 @@ def test_moments_point_at_corrections_interruptions_and_failing_checks():
     )
     kinds = {(m.kind, m.request) for m in moments(t)}
     assert ("failing_check", 0) in kinds
-    assert ("corrected", 0) in kinds
+    assert ("pushback", 0) in kinds
     assert ("interrupted", 1) in kinds
 
 
@@ -289,3 +289,56 @@ def test_a_card_lines_up_in_unicode_and_in_ascii():
                      ["next: do it"], fancy=fancy)
         widths = {len(line) for line in out.splitlines()}
         assert widths == {72}, out
+
+
+def test_one_shot_runs_are_not_work_and_shell_edits_are():
+    one = trace(Step("user", "You are grading one answer."), Step("agent", "8/10"))
+    assert one.one_shot and not one.changed_code
+    shell = trace(Step("user", "bump the version"),
+                  Step("agent", "", [ToolUse("s", "Bash", "shell", {"command": "sed -i '' 's/0.1/0.2/' pyproject.toml"},
+                                             output="", exit_code=0)]))
+    assert not shell.one_shot and shell.changed_code
+    (ex,), _ = examples(shell)
+    assert ex["meta"]["outcome"]["changed_code"] is True
+
+
+def test_a_request_ends_well_only_without_pushback_stops_or_a_failing_final_check():
+    from opentrain.traces.signals import outcomes
+
+    fail = ToolUse(id="f", name="Bash", kind="shell", args={"command": "pytest -q"}, output="1 failed", exit_code=1)
+    ok = ToolUse(id="o", name="Bash", kind="shell", args={"command": "pytest -q"}, output="ok", exit_code=0)
+    edit = tu("edit", "Edit", "ok", path="/repo/a.py", old="a", new="b")
+    t = trace(Step("user", "fix a"), Step("agent", "", [edit]), Step("agent", "", [fail]), Step("agent", "", [ok]),
+              Step("user", "great, now fix b"), Step("agent", "", [edit]), Step("agent", "", [fail]),
+              Step("user", "no, that broke c"), Step("agent", "", [edit]))
+    a, b, c = outcomes(t)
+    assert a["ended_well"] and a["checks"] == "passed"
+    assert not b["ended_well"] and b["checks"] == "failed" and b["pushback"]
+    assert c["ended_well"]
+
+
+def test_a_judged_task_fails_an_empty_change_and_asks_the_judge_otherwise(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from opentrain import judge
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "d@example.com")
+    _git(repo, "config", "user.name", "D")
+    (repo / "a.py").write_text("x = 1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "start")
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    task = SimpleNamespace(base_commit=base, instruction="make x two", meta={}, test_command=judge.JUDGE)
+    monkeypatch.setattr("opentrain.workspace.reference_patch", lambda t: "-x = 1\n+x = 2\n")
+    seen = []
+    monkeypatch.setattr("opentrain.core.complete.complete",
+                        lambda model, msgs, **k: seen.append(msgs) or SimpleNamespace(text="PASS: sets x to two"))
+    assert not judge.verdict(task, repo).passed and not seen  # nothing changed: no judge needed
+    (repo / "a.py").write_text("x = 2\n")
+    v = judge.verdict(task, repo)
+    assert v.passed and "+x = 2" in seen[0][1]["content"]
+    task.meta = {"checks": ["false"]}
+    assert not judge.verdict(task, repo).passed  # a check the work must not break failed

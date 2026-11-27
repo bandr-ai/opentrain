@@ -505,14 +505,14 @@ def cmd_report(a) -> int:
     return 0
 
 
-MOMENT_LABELS = {"corrected": "you corrected it", "interrupted": "you stopped it",
+MOMENT_LABELS = {"pushback": "pushback, to review", "interrupted": "you stopped it",
                  "failing_check": "a check kept failing", "churn": "same file, again", "tool_errors": "tool errors"}
 
 
 def cmd_traces(a) -> int:
-    """Like Paxel and hf-mem: one command, one card. What every coding agent left on this machine,
-    what of it can become training, and where the agents went wrong. Read here; with --import it is
-    also kept in the project for the agent to use."""
+    """Like Paxel and hf-mem: one command, one card. What every coding agent left on this machine, what of
+    it is real work, how that work ended, and what is worth a closer look. Facts only: judging what went
+    wrong is the agent's job (data/diagnose). Read here; with --import it is kept in the project."""
     from ..card import Row, Section, render
     from ..core.tools.coding import import_traces
     from ..traces.readers import scan
@@ -529,26 +529,33 @@ def cmd_traces(a) -> int:
     r = import_traces(state, since=a.since)
     top = max(x["count"] for x in found)
     agents = Section("found", [Row(x["label"], f"{x['count']:,} log{'s' if x['count'] != 1 else ''} · "
-                                                f"{r['coding_by_agent'].get(_reader(x), 0)} changed code", x["count"] / top) for x in found])
-    trainable = Section("can become training", [
+                                                f"{r['coding_by_agent'].get(_reader(x), 0)} changed code",
+                                   x["count"] / top) for x in found])
+    agents.rows.append(Row("work sessions", f"{r['traces']:,}  ({r['one_shot_skipped']:,} one-shot runs skipped)"))
+    ends = r.get("examples_by_outcome") or {}
+    usable = ends.get("ended well", 0)
+    work = Section("your coding work", [
         Row("changed code", f"{r['coding_traces']} sessions in {r['repos']} repos"),
-        Row("examples", f"{r['examples']} requests, in a small model's tools"),
+        Row("requests", f"{r['examples']} changed code · {ends.get('committed', 0)} committed"),
+        Row("ended well", f"{usable} of {r['examples']} · trainable",
+            usable / r["examples"] if r["examples"] else 0.0),
     ])
-    sections = [agents, trainable]
+    sections = [agents, work]
     if r["moments"]:
         worst = max(r["moments"].values())
-        sections.append(Section("where your agents went wrong", [
+        sections.append(Section("worth a closer look", [
             Row(MOMENT_LABELS.get(k, k), f"{n} times", n / worst)
             for k, n in sorted(r["moments"].items(), key=lambda kv: -kv[1])]))
     footer = ([f"kept in {state}", "next: opentrain web  ->  'a small model that does my coding'"] if state else
-              ["next: opentrain traces --import   (keep it in this project)",
+              ["ended well = no pushback after it, not stopped, no failing check",
+               "next: opentrain traces --import   (keep it in this project)",
                "then: opentrain web  ->  'a small model that does my coding'"])
     if r["coding_traces"] < 10:
         footer.insert(0, "few sessions changed code: your repos' commit history will supply most tasks")
     from .. import __version__
 
     print(render(f"opentrain {__version__}  ·  your coding agents",
-                 [f"{r['traces']:,} logs read here · credentials scrubbed · nothing uploaded"],
+                 [f"{r['traces'] + r['one_shot_skipped']:,} logs read here · credentials scrubbed · nothing uploaded"],
                  sections, footer))
     return 0
 

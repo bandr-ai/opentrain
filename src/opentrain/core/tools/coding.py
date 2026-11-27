@@ -72,7 +72,7 @@ def import_traces(state: Path | None, sources: list[str] | None = None, since: s
                   progress=lambda frac, text: None, check=lambda: None) -> dict[str, Any]:
     """Read every agent's logs on this machine into ``<state>/traces`` (scrubbed); the import summary.
     With ``state=None`` nothing is written: the summary alone (``opentrain traces`` before an import)."""
-    from ...traces import EDIT_KINDS
+    from ...traces import changes_files
     from ...traces.readers import read_all
     from ...traces.scrub import scrub_trace
     from ...traces.sft import examples, work_root
@@ -80,7 +80,10 @@ def import_traces(state: Path | None, sources: list[str] | None = None, since: s
 
     progress(None, "reading every agent's logs on this machine")
     traces, unreadable = read_all(sources, since=since)
+    one_shot = [t for t in traces if t.one_shot]
+    traces = [t for t in traces if not t.one_shot]  # scripts' `claude -p` calls and quick questions: not work
     index, exs, skipped, moms = [], [], Counter(), []
+    ended = Counter()
     for i, t in enumerate(traces):
         if i % 50 == 0:
             progress(i / max(1, len(traces)), f"{i} of {len(traces)} traces")
@@ -90,13 +93,17 @@ def import_traces(state: Path | None, sources: list[str] | None = None, since: s
         good, bad = examples(t)
         for ex in good:
             ex["meta"]["repo"] = repo or ""
+            o = ex["meta"].get("outcome") or {}
+            ended["ended well" if o.get("ended_well") else "pushed back, stopped or failing" if o else "unknown"] += 1
+            if o.get("committed"):
+                ended["committed"] += 1
         exs += good
         skipped.update(b["reason"].split(" (")[0] for b in bad)
         ms = [m.public() for m in moments(t)]
         moms += ms
         index.append({"trace": t.trace_id, "agent": t.agent, "path": t.path, "cwd": t.cwd, "repo": repo,
                       "started_at": t.started_at.isoformat() if t.started_at else None,
-                      "requests": len(t.prompts), "edits": sum(1 for u in t.tool_uses() if u.kind in EDIT_KINDS),
+                      "requests": len(t.prompts), "edits": sum(1 for u in t.tool_uses() if changes_files(u)),
                       "files_edited": len(t.edited_files), "examples": len(good),
                       "moments": dict(Counter(m["kind"] for m in ms)), "models": t.models[:3]})
     if state is not None:
@@ -106,7 +113,8 @@ def import_traces(state: Path | None, sources: list[str] | None = None, since: s
         _write_jsonl(d / "examples.jsonl", exs)
         _write_jsonl(d / "moments.jsonl", moms)
     coding = [r for r in index if r["edits"]]
-    return {"traces": len(index), "unreadable": len(unreadable),
+    return {"traces": len(index), "unreadable": len(unreadable), "one_shot_skipped": len(one_shot),
+            "examples_by_outcome": dict(ended),
             "by_agent": dict(Counter(r["agent"] for r in index)),
             "coding_by_agent": dict(Counter(r["agent"] for r in coding)),
             "coding_traces": len(coding), "repos": len({r["repo"] for r in coding if r["repo"]}),
@@ -227,7 +235,8 @@ def themes_choose(ctx, names: list[str]) -> Any:
 
 
 def tasks_from_history(ctx, repos: list[str] | None = None, limit: int = 30, author: str | None = None,
-                       since: str | None = None, rewrite: bool = True) -> ToolResult:
+                       since: str | None = None, rewrite: bool = True, verifier: str = "auto",
+                       checks: list[str] | None = None) -> ToolResult:
     srv = _server(ctx)
     state, tf, run = ctx.project.state, srv.tf, srv.run
     if not repos:
@@ -241,11 +250,13 @@ def tasks_from_history(ctx, repos: list[str] | None = None, limit: int = 30, aut
         from ...tasks import HeldoutStore, Store, split_store
 
         r = mine_history(state, list(repos), author=author, since=since, limit=max(1, min(int(limit), 200)),
-                         rewrite_with="claude-code/sonnet" if rewrite else None, say=job.log)
+                         rewrite_with="claude-code/sonnet" if rewrite else None, verifier=verifier,
+                         checks=checks, say=job.log)
         split = split_store(state, tf.heldout_fraction)
         run.add("data", source="history", repos=list(repos), accepted=r["accepted"], rejected=r["rejected"],
                 reasons=r["reasons"], split=split)
-        return {**{k: v for k, v in r.items() if k != "rows"}, "rows": r["rows"][:60],
+        by_verifier = dict(Counter(x.get("verifier", "tests") for x in r["rows"] if x.get("outcome") == "accepted"))
+        return {**{k: v for k, v in r.items() if k != "rows"}, "rows": r["rows"][:60], "accepted_by_verifier": by_verifier,
                 "train": len(Store(state).ids()), "heldout": len(HeldoutStore(state).ids())}
 
     def summary(r: Any) -> str:
@@ -343,6 +354,8 @@ def trace_examples(state: Path, *, themes_only: bool = False) -> tuple[list[dict
             dropped["on or after the held-out cutoff"] += 1
         elif m.get("trace") in held_sessions:
             dropped["same session as a held-out task"] += 1
+        elif m.get("outcome") and not m["outcome"].get("ended_well"):
+            dropped["did not end well (pushed back, stopped, or checks failing)"] += 1
         elif themes_only and f"{m.get('trace')}:{m.get('request')}" not in chosen and m.get("trace") not in chosen:
             dropped["not in a chosen theme"] += 1
         else:
@@ -395,10 +408,11 @@ def tools() -> list[Tool]:
              "limit": {"type": "integer"}}), traces_list),
         T("trace_show", "One imported trace, request by request: the prompt and each tool step in a line.",
           S({"trace": {"type": "string"}, "request": {"type": "integer"}}, ["trace"]), trace_show),
-        T("moments", "Where imported traces went wrong (the person corrected or stopped the agent, a check kept "
-          "failing, the same file edited over and over, tool errors), newest first, paged. Read them in batches to "
+        T("moments", "Where imported traces may have gone wrong (pushback: the next prompt reads like disagreement, a "
+          "keyword match you must read before counting it; the person stopped the agent; a check kept "
+          "failing; the same file edited over and over; tool errors), newest first, paged. Read them in batches to "
           "name themes (skill data/diagnose).",
-          S({"kind": {"type": "string", "enum": ["corrected", "interrupted", "failing_check", "churn", "tool_errors"]},
+          S({"kind": {"type": "string", "enum": ["pushback", "interrupted", "failing_check", "churn", "tool_errors"]},
              "offset": {"type": "integer"}, "limit": {"type": "integer"}}), moments_list),
         T("themes_set", "Save the themes you named from the moments: name (the person's terms), description, count, "
           "evidence (trace ids or trace:request), and the fix (what training data would teach it).",
@@ -414,7 +428,11 @@ def tools() -> list[Tool]:
         T("tasks_from_history", "Job: verified tasks from the repos' own commits that changed code and tests (the "
           "repo at the parent commit; the commit's tests decide). Each commit is rewritten into the request a person "
           "would have typed, by claude-code/sonnet (free on the user's Claude login) unless rewrite=false. Then the "
-          "held-out split is refreshed. Default repos: the ones imported traces worked in.",
+          "held-out split is refreshed. Default repos: the ones imported traces worked in. verifier: auto (the "
+          "commit's tests when it changed tests, else a judge that compares the change with the real one, after "
+          "`checks` pass), tests, or judge. Judged tasks are certified the same way and marked as judged.",
           S({"repos": strs, "limit": {"type": "integer"}, "author": {"type": "string"},
-             "since": {"type": "string"}, "rewrite": {"type": "boolean"}}), tasks_from_history),
+             "since": {"type": "string"}, "rewrite": {"type": "boolean"},
+             "verifier": {"type": "string", "enum": ["auto", "tests", "judge"]}, "checks": strs}),
+          tasks_from_history),
     ]

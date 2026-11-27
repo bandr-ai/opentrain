@@ -25,6 +25,19 @@ from typing import Any, Literal
 ToolKind = Literal["shell", "read", "edit", "write", "patch", "search", "web", "task", "other"]
 EDIT_KINDS = ("edit", "write", "patch")
 
+# A shell command that writes files: how agents (and people) often edit without an edit tool.
+SHELL_EDIT = re.compile(r"(\bsed\s+-i|\bperl\s+-p?i|\bcat\s*>|\btee\s+(-a\s+)?[\w./-]|\bpython3?\s+-\s*<<|"
+                        r"\bapply_patch\b|\bgit\s+apply\b|\bpatch\s+-p|>\s*[\w./-]+\.\w{1,5}\b)")
+
+
+def changes_files(t: "ToolUse") -> bool:
+    """An edit tool, or a shell command that writes files."""
+    if t.kind in EDIT_KINDS:
+        return True
+    cmd = t.args.get("command")
+    cmd = " ".join(map(str, cmd)) if isinstance(cmd, list) else cmd
+    return t.kind == "shell" and isinstance(cmd, str) and bool(SHELL_EDIT.search(cmd))
+
 
 @dataclass
 class ToolUse:
@@ -75,6 +88,15 @@ class Trace:
 
     def tool_uses(self, *, main_only: bool = True) -> list[ToolUse]:
         return [t for s in self.steps if s.source == "agent" and not (main_only and s.sidechain) for t in s.tools]
+
+    @property
+    def one_shot(self) -> bool:
+        """A single prompt and no tool use: a script's ``claude -p`` call, a quick question, not a work session."""
+        return len(self.prompts) <= 1 and not self.tool_uses(main_only=False)
+
+    @property
+    def changed_code(self) -> bool:
+        return any(changes_files(t) for t in self.tool_uses())
 
     @property
     def edited_files(self) -> list[str]:

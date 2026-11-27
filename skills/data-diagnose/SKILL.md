@@ -5,7 +5,8 @@ description: Name what goes wrong in the person's coding-agent traces, in their 
 
 # data/diagnose
 
-The import flags moments: the person corrected the agent (`corrected`), stopped it
+The import flags moments: the next prompt reads like disagreement (`pushback`: a keyword match,
+often just an answer to a question, so read it before counting it), the person stopped the agent
 (`interrupted`), a check kept failing (`failing_check`), a file was edited over and over
 (`churn`), tool calls errored (`tool_errors`). They are evidence, not verdicts. You turn them into
 a few themes the person recognises.
@@ -19,7 +20,7 @@ a few themes the person recognises.
    the agent did right before the correction.
 3. Next batch (`offset`). Merge, split or drop themes as evidence arrives. Stop when a full batch
    changes nothing, or after about 200 moments.
-4. Keep themes that recur (3+ moments, or 2 with an explicit correction). Leave out one-offs and
+4. Keep themes that recur (3+ moments you read as real, or 2 with an explicit correction). Leave out one-offs and
    moments about the environment (network down, missing credentials): no training fixes those.
 5. `themes_set`: for each, name, one-sentence description, count, evidence (`trace:request` ids)
    and the fix (what data teaches it: the corrected continuation as the target, repair tasks from

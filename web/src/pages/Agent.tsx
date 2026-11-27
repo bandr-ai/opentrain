@@ -208,7 +208,7 @@ type TraceView = { sources: TraceSource[]; imported: number; coding: number; exa
   repos: { repo: string; traces: number }[]; moments: Record<string, number>;
   themes: { name: string; description: string; count: number; chosen: boolean }[] };
 
-const MOMENT: Record<string, string> = { corrected: "you corrected the agent", interrupted: "you stopped it",
+const MOMENT: Record<string, string> = { pushback: "pushback to review", corrected: "pushback to review", interrupted: "you stopped it",
   failing_check: "a check kept failing", churn: "same file edited over and over", tool_errors: "tool errors" };
 
 // Like Paxel: show what coding-agent traces this machine has, import them locally, then what went wrong.

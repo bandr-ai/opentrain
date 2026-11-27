@@ -181,8 +181,12 @@ def translate(t: ToolUse, cwd: str | None) -> list[tuple[str, dict[str, Any], st
 def requests(trace: Trace) -> list[tuple[str, list[Step]]]:
     """Each prompt the person typed, with the agent's main-loop steps until the next one."""
     out: list[tuple[str, list[Step]]] = []
+    from .signals import INTERRUPTED
+
     for s in trace.steps:
         if s.source == "user" and s.text.strip():
+            if INTERRUPTED.search(s.text.strip()):
+                continue  # "[Request interrupted by user]" ends a request; it is not one
             out.append((s.text.strip(), []))
         elif s.source == "agent" and not s.sidechain and out:
             out[-1][1].append(s)
@@ -227,10 +231,14 @@ def examples(trace: Trace, *, edits_only: bool = True) -> tuple[list[Example], l
     """Every usable request of a trace as an example, and why each other one was left out."""
     good: list[Example] = []
     skipped: list[dict[str, str]] = []
+    from . import changes_files
+    from .signals import outcomes
+
     root = work_root(trace) or trace.cwd
+    ends = outcomes(trace)
     for i, (prompt, steps) in enumerate(requests(trace)):
         where = {"trace": trace.trace_id, "agent": trace.agent, "request": str(i)}
-        if edits_only and not any(t.kind in ("edit", "write", "patch") for s in steps for t in s.tools):
+        if edits_only and not any(changes_files(t) for s in steps for t in s.tools):
             skipped.append({**where, "reason": "changed no code"})
             continue
         try:
@@ -238,6 +246,7 @@ def examples(trace: Trace, *, edits_only: bool = True) -> tuple[list[Example], l
         except Skip as exc:
             skipped.append({**where, "reason": str(exc)})
             continue
-        ex["meta"] = {**where, "cwd": root or "", "at": trace.started_at.isoformat() if trace.started_at else ""}
+        ex["meta"] = {**where, "cwd": root or "", "at": trace.started_at.isoformat() if trace.started_at else "",
+                      "outcome": ends[i] if i < len(ends) else {}}
         good.append(ex)
     return good, skipped

@@ -1,4 +1,8 @@
-"""Where a trace went wrong: the evidence the agent reads to name what to fix (skill ``data/diagnose``).
+"""Where a trace went wrong, and how each request ended: evidence, not judgements.
+
+``moments`` are what the agent reads to name what to fix (skill ``data/diagnose``); ``outcomes`` say
+how each request ended (committed, checks passing after the last edit, the person pushing back or
+stopping it), so training can keep the requests that ended well.
 
 These are cheap, local checks over a trace, not judgements. Each one points at a moment the
 person or the tools pushed back: the person corrected the agent or stopped it, a check kept failing,
@@ -36,7 +40,8 @@ class Moment:
     agent: str
     request: int
     kind: str
-    """``corrected``, ``interrupted``, ``failing_check``, ``churn`` or ``tool_errors``."""
+    """``pushback`` (the next prompt reads like the person disagreeing; a keyword match, for the agent to
+    review), ``interrupted``, ``failing_check``, ``churn`` or ``tool_errors``."""
     detail: str
     prompt: str
     """The request the moment belongs to (clipped)."""
@@ -86,7 +91,7 @@ def moments(trace: Trace) -> list[Moment]:
                 if INTERRUPTED.search(text):
                     out.append(Moment(kind="interrupted", detail="the person stopped the agent", **base))
                 elif CORRECTION.search(text[:300]):
-                    out.append(Moment(kind="corrected", detail=_clip(text, 300), **base))
+                    out.append(Moment(kind="pushback", detail=_clip(text, 300), **base))
             if not INTERRUPTED.search(text):
                 req += 1
                 prompt = text
@@ -117,3 +122,43 @@ def summary(traces: list[Trace]) -> dict[str, Any]:
         with_any += bool(ms)
         kinds.update(m.kind for m in ms)
     return {"traces": len(traces), "traces_with_moments": with_any, "moments": dict(kinds.most_common())}
+
+
+def outcomes(trace: Trace) -> list[dict[str, Any]]:
+    """How each request ended, in the order of ``traces.sft.requests``: facts from the trace only."""
+    from . import changes_files
+
+    reqs: list[dict[str, Any]] = []
+    cur: dict[str, Any] | None = None
+    last_edit_seen = False
+    for s in trace.steps:
+        if s.source == "user" and s.text.strip():
+            text = s.text.strip()
+            if cur is not None:
+                cur["interrupted"] = cur["interrupted"] or bool(INTERRUPTED.search(text))
+                cur["pushback"] = bool(CORRECTION.search(text[:300])) and not INTERRUPTED.search(text)
+            if INTERRUPTED.search(text):
+                continue
+            cur = {"changed_code": False, "committed": False, "checks": None, "pushback": False,
+                   "interrupted": False}
+            reqs.append(cur)
+            last_edit_seen = False
+            continue
+        if cur is None or s.source != "agent" or s.sidechain:
+            continue
+        for t in s.tools:
+            cmd = t.args.get("command")
+            cmd = " ".join(map(str, cmd)) if isinstance(cmd, list) else (cmd or "")
+            if changes_files(t):
+                cur["changed_code"] = last_edit_seen = True
+                cur["checks"] = None  # only checks after the last edit say how the work ended
+            if t.kind == "shell" and isinstance(cmd, str):
+                if "git commit" in cmd and not (t.is_error or t.exit_code not in (None, 0)):
+                    cur["committed"] = True
+                if _TEST.search(cmd) and last_edit_seen:
+                    failed = t.is_error or t.exit_code not in (None, 0)
+                    cur["checks"] = "failed" if failed else "passed"
+    for r in reqs:
+        r["ended_well"] = bool(r["changed_code"] and not r["pushback"] and not r["interrupted"]
+                               and r["checks"] != "failed")
+    return reqs
