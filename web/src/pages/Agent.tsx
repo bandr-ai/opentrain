@@ -4,6 +4,7 @@ import { go, useApp } from "../App";
 import { ago, dur, Icon, Markdown, money, pct, Progress, toastError } from "../ui";
 import { Curve } from "./Board";
 import { Scorecard } from "./Scorecard";
+import { ArtifactInline, artifactIdOf } from "./Artifacts";
 
 // The agent sits beside the board: it does the work, proposes one step at a time, and you steer it.
 
@@ -59,6 +60,8 @@ export function AgentPanel({ convo = true }: { convo?: boolean }) {
   const [picking, setPicking] = useState(false);
   const commands = useCommands();
   const scroller = useRef<HTMLDivElement>(null);
+  // artifacts already in the conversation when it loaded; any made after that open beside the chat
+  const opened = useRef<Set<string> | null>(null);
   const stick = useRef(true);
 
   const loadAsks = useCallback(() => {
@@ -80,9 +83,22 @@ export function AgentPanel({ convo = true }: { convo?: boolean }) {
       setSession(s);
       setModel(typeof s.model === "string" ? s.model : "");
     }).catch(() => setSid(null));
-    api.get<Message[]>(`/api/session/${sid}/message`).then(setMessages).catch(() => {});
+    opened.current = null;
+    api.get<Message[]>(`/api/session/${sid}/message`).then((ms) => {
+      opened.current = new Set(ms.flatMap((m) => m.parts.map((p) => (p.tool ? artifactIdOf(p.tool) && p.id : null))
+        .filter((x): x is string => !!x)));
+      setMessages(ms);
+    }).catch(() => {});
     loadAsks();
   }, [sid, loadAsks, setSid]);
+
+  useEffect(() => {
+    if (!opened.current) return; // still loading the history
+    for (const m of messages) for (const p of m.parts) {
+      const aid = p.tool ? artifactIdOf(p.tool) : null;
+      if (aid && !opened.current.has(p.id)) { opened.current.add(p.id); go("a", aid); }
+    }
+  }, [messages]);
 
   useEffect(() => events.on((e) => {
     const d = e.data || {};
@@ -350,6 +366,8 @@ function MessageView({ m, jobById }: { m: Message; jobById: Record<string, Job> 
         if (p.type === "reasoning") return p.text ? <Reasoning key={p.id} text={p.text} /> : null;
         if (p.type === "tool" && p.tool) {
           if (p.tool.name === "propose") return <ProposalLine key={p.id} tool={p.tool} />;
+          const aid = artifactIdOf(p.tool);
+          if (aid) return <ArtifactInline key={p.id} id={aid} />;
           const jid = p.tool.metadata?.job_id;
           const job = jid ? jobById[jid] : undefined;
           return (

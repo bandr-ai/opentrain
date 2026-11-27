@@ -581,3 +581,5 @@ tr.g-open td { background: var(--sunken); }
 .art-decision { margin-top: 24px; }
 .art-text { margin: 12px 0; }
 @media (max-width: 640px) { .art-pair { grid-template-columns: 1fr; } .art-bar { grid-template-columns: 1fr 1fr 56px; } }
+.art-inline { display: grid; gap: 4px; }
+.art-inline .art-title { color: inherit; }
