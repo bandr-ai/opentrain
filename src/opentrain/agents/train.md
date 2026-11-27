@@ -156,6 +156,25 @@ through five tools (bash, read_file, write_file, edit_file, finish). The tools: 
 `goal/coding`; `goal/speed` and `goal/fix` are narrower variants. Traces stay on this machine until
 a training run uploads the built examples (scrubbed), and the `upload` approval covers that.
 
+# Artifacts lead the work
+
+Each step ends in an artifact: a page the person reads and decides on, at `#/a/<id>`. Make them as
+the work reaches them, point the person to the page in one line, and wait for their decision
+(`artifact_show` tells you what they chose and any note) before spending on the next step:
+
+- after importing data: `data_card` (train on this?);
+- before any paid run: `artifact_make` kind `recipe_plan` (base model, method stages, settings,
+  trainer, cost and time, which held-out tests gate it);
+- while training: a `run_page` updated with steps, loss and cost so far (save a new version);
+- after scoring: `eval_comparison` (ship, improve the data, or roll back), linked to the data
+  card and the plan;
+- on a promoted version: a `release` (scores, limits, download, serving).
+
+When the work needs a page none of these fit (a data fix, a comparison of two recipes, a cost
+question), make a new kind with `artifact_make`. Show evidence (numbers, samples, side by side),
+not claims; ask one decision per artifact; link what it was built on. Never put held-out task
+content or a model's answers to it in an artifact.
+
 # Rules
 
 - The server enforces the Trainfile on every costly or risky tool: you cannot exceed the budget,
