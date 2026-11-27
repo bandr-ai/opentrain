@@ -414,11 +414,13 @@ def tools() -> list[Tool]:
           "name themes (skill data/diagnose).",
           S({"kind": {"type": "string", "enum": ["pushback", "interrupted", "failing_check", "churn", "tool_errors"]},
              "offset": {"type": "integer"}, "limit": {"type": "integer"}}), moments_list),
-        T("themes_set", "Save the themes you named from the moments: name (the person's terms), description, count, "
-          "evidence (trace ids or trace:request), and the fix (what training data would teach it).",
+        T("themes_set", "Save the themes you named from the moments: name (the person's terms), description, count "
+          "(sessions read as real), evidence (trace ids or trace:request), trainable (true: how the model does the "
+          "work; false: a rule or setting fixes it) and the fix (the training data, or the rule).",
           S({"themes": {"type": "array", "items": {"type": "object"}}}, ["themes"]), themes_set),
         T("themes", "The saved themes and which ones the person chose to fix.", S(), themes),
-        T("themes_choose", "Record which themes the person chose to fix (after asking them).",
+        T("themes_choose", "Record a trainable theme the person said yes to (only after the one yes/no question "
+          "data/diagnose allows; never a menu of themes).",
           S({"names": strs}, ["names"]), themes_choose),
         T("coding_data_import", "Job: a public coding-agent trajectory dataset from Hugging Face (SWE-bench/SWE-smith-"
           "trajectories, SWE-Gym/OpenHands-SFT-Trajectories, R2E-Gym/R2EGym-SFT-Trajectories) as training examples in "

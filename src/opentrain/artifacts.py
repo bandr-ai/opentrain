@@ -231,6 +231,17 @@ def data_card(state: Path, *, id: str = "data-card") -> dict[str, Any]:
                                  "context. A request is trained when it changed code and ended well: no pushback "
                                  "after it, not stopped, no check failing at the end."},
     ]
+    themes = []
+    try:
+        themes = json.loads((d / "themes.json").read_text())
+    except (OSError, ValueError):
+        pass
+    if themes:
+        blocks.append({"type": "table", "title": "What went wrong, read from the moments",
+                       "columns": ["theme", "sessions", "training fixes it?", "the fix"],
+                       "rows": [[t.get("name", ""), t.get("count", ""),
+                                 "yes" + (" (chosen)" if t.get("chosen") else "") if t.get("trainable", True)
+                                 else "no: a rule", str(t.get("fix", ""))[:200]] for t in themes]})
     sample = next((e for e in examples if ((e.get("meta") or {}).get("outcome") or {}).get("ended_well", True)), None)
     if sample:
         msgs = sample["messages"]

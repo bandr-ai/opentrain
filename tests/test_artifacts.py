@@ -88,3 +88,12 @@ def test_the_agent_has_the_artifact_tools():
 
     names = {t.name for t in artifacts.tools()}
     assert names == {"data_card", "eval_comparison", "artifact_make", "artifacts", "artifact_show"}
+
+
+def test_the_data_card_sorts_themes_into_training_and_rules(tmp_path):
+    _traces(tmp_path)
+    (tmp_path / "traces" / "themes.json").write_text(json.dumps([
+        {"name": "does more than asked", "count": 7, "trainable": True, "fix": "corrected continuations"},
+        {"name": "adds a co-author trailer", "count": 3, "trainable": False, "fix": "a commit rule"}]))
+    t = next(b for b in A.data_card(tmp_path)["blocks"] if b.get("title", "").startswith("What went wrong"))
+    assert [r[2] for r in t["rows"]] == ["yes", "no: a rule"]
