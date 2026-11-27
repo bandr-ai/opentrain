@@ -28,7 +28,7 @@ TOKEN_MARK = "__OPENTRAIN_TOKEN__"
 DIR_COOKIE = "opentrain_dir"
 SECURITY = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
             "Content-Security-Policy": ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-                                        "connect-src 'self'; img-src 'self' data:; base-uri 'none'; "
+                                        "connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; "
                                         "form-action 'none'; frame-ancestors 'none'")}
 
 routes = web.RouteTableDef()
