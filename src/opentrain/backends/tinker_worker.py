@@ -30,8 +30,9 @@ def _cookbook_datums(rows: list[dict[str, Any]], tokenizer: Any, spec, log) -> l
     from tinker_cookbook import model_info, renderers
     from tinker_cookbook.supervised.data import conversation_to_datum
 
-    name = spec.extra.get("renderer") or model_info.get_recommended_renderer_name(spec.base_model)
-    renderer = renderers.get_renderer(name, tokenizer, model_name=spec.base_model)
+    family = spec.base_model.split(":")[0]  # Inkling-2-Mini:peft:65536:free renders as Inkling-2-Mini
+    name = spec.extra.get("renderer") or model_info.get_recommended_renderer_name(family)
+    renderer = renderers.get_renderer(name, tokenizer, model_name=family)
     log(f"renderer {name} (tinker-cookbook)")
     out = []
     for row in rows:

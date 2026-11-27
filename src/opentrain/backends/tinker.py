@@ -55,8 +55,15 @@ TRAIN_USD_PER_MTOK: dict[str, float] = {
     # From https://tinker-docs.thinkingmachines.ai/tinker/models.json ("train" field), as of PRICES_AS_OF.
     # A model not listed here needs spec.extra["usd_per_mtok"]; we never guess a price.
     "thinkingmachines/Inkling-2-Mini": 0.75,
+    "thinkingmachines/Inkling-2-Mini:peft:65536:free": 0.0,  # free tier: 64K context, rate-limited
+    "thinkingmachines/Inkling-2-Mini:peft:262144": 1.50,
     "thinkingmachines/Inkling-2-Small": 1.50,
+    "thinkingmachines/Inkling-2-Small:peft:262144": 3.00,
     "thinkingmachines/Inkling-Small": 1.73,
+    "thinkingmachines/Inkling-Small:peft:262144": 3.47,
+    "Qwen/Qwen3.5-4B:peft:262144": 1.34,
+    "Qwen/Qwen3.8-27B:peft:262144": 7.46,
+    "Qwen/Qwen3.6-35B-A3B:peft:262144": 2.14,
     "Qwen/Qwen3-8B": 0.44,
     "Qwen/Qwen3.5-4B": 0.737,
     "Qwen/Qwen3.5-9B": 1.463,

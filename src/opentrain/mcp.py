@@ -305,8 +305,13 @@ class Server:
                 from .backends import runpod_backend
 
                 ep = runpod_backend.endpoint(base)
+            elif trainer == "tinker":
+                from .backends import tinker
+                from .plugs import Endpoint
+
+                ep = Endpoint(base_url=tinker.OPENAI_BASE, model=base, api_key_env=tinker.KEY_ENV)
             else:
-                raise ToolError(f"scoring the untrained {base} needs it served on modal or runpod; the trainer is "
+                raise ToolError(f"scoring the untrained {base} needs it served on modal, runpod or tinker; the trainer is "
                                 f"{trainer}")
         except (ServingError, RuntimeError) as exc:
             raise ToolError(f"could not serve {base}: {exc}") from None

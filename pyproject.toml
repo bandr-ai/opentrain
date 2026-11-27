@@ -30,7 +30,7 @@ classifiers = [
 # Engine providers. Claude Code (your own login) and OpenAI-compatible endpoints need nothing extra.
 anthropic = ["anthropic>=1.0"]
 # Trainer backends. Each imports its SDK lazily, so the harness runs without them.
-tinker = ["tinker>=0.40", "tinker-cookbook>=0.7.1"]
+tinker = ["tinker>=0.40", "tinker-cookbook>=0.7.1", "tml-renderers"]  # tml-renderers: Inkling models
 local = ["torch>=2.4", "transformers>=4.57", "peft>=0.13", "trl>=1.18", "datasets>=4.7"]
 modal = ["modal>=1.6"]  # train and serve on your Modal account
 serve-local = ["vllm"]  # Linux + CUDA only

@@ -4197,6 +4197,7 @@ serve-local = [
 tinker = [
     { name = "tinker" },
     { name = "tinker-cookbook" },
+    { name = "tml-renderers" },
 ]
 
 [package.metadata]
@@ -4212,6 +4213,7 @@ requires-dist = [
     { name = "textual", specifier = ">=1.0" },
     { name = "tinker", marker = "extra == 'tinker'", specifier = ">=0.40" },
     { name = "tinker-cookbook", marker = "extra == 'tinker'", specifier = ">=0.7.1" },
+    { name = "tml-renderers", marker = "extra == 'tinker'" },
     { name = "torch", marker = "extra == 'local'", specifier = ">=2.4" },
     { name = "transformers", marker = "extra == 'local'", specifier = ">=4.57" },
     { name = "trl", marker = "extra == 'local'", specifier = ">=1.18" },

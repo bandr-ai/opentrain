@@ -55,11 +55,12 @@ class Model:
 
 CATALOG: tuple[Model, ...] = (
     # ---- small: cheap to serve, the default students
-    Model("thinkingmachines/Inkling-2-Mini", "Inkling 2 Mini", "small", 26.4, 3.4, "inkling", "inkling",
+    Model("thinkingmachines/Inkling-2-Mini", "Inkling 2 Mini", "small", 26.4, 5.4, "inkling", "inkling",
           min_vllm="0.35.0", trainers=("tinker",), context=65536,
           coding="SWE-bench Verified 79.2% (bash only), Terminal-Bench 2.1 71.6% (vendor)",
-          notes="Looped MoE (middle layers run three times). Tinker: $0.75/M train tokens, free tier up to 64K "
-                "context. Serving it yourself needs a vLLM nightly, so OpenTrain trains and serves it on Tinker.",
+          notes="Looped MoE (middle layers run three times). Tinker: $0.75/M train tokens at 64K context, $1.50/M "
+                "at 256K; free (rate-limited, 64K) as thinkingmachines/Inkling-2-Mini:peft:65536:free. Serving it "
+                "yourself needs a vLLM nightly, so OpenTrain trains and serves it on Tinker.",
           source="https://thinkingmachines.ai/model-card/inkling-2-mini/", tinker_id="thinkingmachines/Inkling-2-Mini"),
     Model("Qwen/Qwen3.5-4B", "Qwen3.5 4B", "small", 4, 4, "qwen3_coder", "qwen3",
           trainers=("modal", "runpod", "tinker"), context=32768,

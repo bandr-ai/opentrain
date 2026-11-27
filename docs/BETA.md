@@ -11,8 +11,10 @@ send feedback.
   is the teacher whose runs the small model learns from.
 - **Somewhere to train**, on your own account:
   - [Modal](https://modal.com): `modal setup` once. Trains Qwen3.5 / Qwen3.8 and serves them.
-  - or [Tinker](https://thinkingmachines.ai/tinker): paste your key in Settings. Trains Inkling 2 Mini
-    and Inkling-Small.
+  - or [Tinker](https://tinker.thinkingmachines.ai/keys?new_key=true): paste your key in Settings (or set
+    `TINKER_API_KEY`). Trains Inkling 2 Mini and Inkling-Small, and serves the result with tool calls.
+    Inkling 2 Mini has a free tier (64K context, rate-limited): base model
+    `thinkingmachines/Inkling-2-Mini:peft:65536:free`.
   - or RunPod: `opentrain login runpod`.
 - For coding: repos with tests that run on your machine. The tests decide every task.
 

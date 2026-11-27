@@ -58,7 +58,13 @@ class ModalError(RuntimeError):
 
 
 def params_b(model: str) -> float | None:
-    """Billions of parameters, read from the model's name (``Qwen3-8B`` -> 8, ``30B-A3B`` -> 30)."""
+    """Billions of parameters (all of them: what has to fit in memory). The model table's figure when the
+    model is in it, else read from the name (``Qwen3-8B`` -> 8, ``30B-A3B`` -> 30)."""
+    from ..models import get as catalog_model
+
+    known = catalog_model(model.split(":")[0])
+    if known:
+        return known.total_b
     m = re.search(r"(\d+(?:\.\d+)?)\s*[bB](?![a-zA-Z])", model.split("/")[-1])
     return float(m.group(1)) if m else None
 

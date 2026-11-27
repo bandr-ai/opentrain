@@ -37,7 +37,8 @@ held-out tasks the report breaks out.
 ## 4. Pick the student (`students`)
 
 Offer the tiers in one `question`, cheapest first, with the reason for each:
-- small: Inkling 2 Mini on Tinker (strongest coding per active parameter; Tinker key needed),
+- small: Inkling 2 Mini on Tinker (strongest coding per active parameter; Tinker key needed; a free
+  tier at 64K context as `thinkingmachines/Inkling-2-Mini:peft:65536:free`, good for a first run),
   Qwen3.5-4B / 9B on Modal or RunPod (cheapest self-hosted; works with their GPU account today);
 - mid: Qwen3.8-27B (Tinker or one H200 on Modal), Qwen3.6-35B-A3B (3B active);
 - large: Inkling-Small on Tinker, when the small ones fall short.
