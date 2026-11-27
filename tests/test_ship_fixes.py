@@ -131,3 +131,43 @@ def test_shell_commands_train_from_the_repo_not_this_machine(monkeypatch):
     assert sft.relative_command("ls /Users/me/code/other", root) == "ls ~/code/other"
     assert sft.relative_command("grep -r /Users/me .", root) == "grep -r ~ ."
     assert sft.relative_command("ls /Users/meg", root) == "ls /Users/meg"  # another user's folder
+
+
+def test_tinker_preflight_asks_the_deployment_the_sdk_will_use(monkeypatch):
+    from opentrain.backends import tinker as tk
+
+    monkeypatch.delenv("TINKER_BASE_URL", raising=False)
+    assert tk.api_base() == "https://tinker.thinkingmachines.dev/services/tinker-prod/api/v1"
+    monkeypatch.setenv("TINKER_BASE_URL", "https://example.test/tinker/")
+    assert tk.api_base() == "https://example.test/tinker/api/v1"
+
+
+def test_a_launch_that_fails_gives_the_budget_back(tmp_path, monkeypatch):
+    import types
+
+    from opentrain import backends, mcp
+    from opentrain.budget import Ledger
+    from opentrain.trainfile import Budget
+
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "train.jsonl").write_text('{"messages": []}\n')
+    (tmp_path / "data" / "manifest.json").write_text('{"tasks": []}')
+
+    class Refusing:
+        def available(self):
+            return True, "ok"
+
+        def estimate(self, spec):
+            return 1.0
+
+        def launch(self, spec):
+            raise RuntimeError("Tinker: Access is blocked due to billing status")
+
+    monkeypatch.setattr(backends, "get_backend", lambda name, state: Refusing())
+    t = mcp.Server.__new__(mcp.Server)  # only what t_train_launch reads
+    t.state, t.ledger = tmp_path, Ledger(tmp_path, Budget(5.0, 7, "$5 a week"))
+    t.tf = types.SimpleNamespace(trainer="tinker", base_model="m")
+    t.run = types.SimpleNamespace(run_id="r1", add=lambda *a, **k: None)
+    with pytest.raises(mcp.ToolError, match="billing"):
+        t.t_train_launch()
+    assert t.ledger.reserved() == 0 and t.ledger.remaining() == 5.0

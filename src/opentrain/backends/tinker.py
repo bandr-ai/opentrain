@@ -83,7 +83,12 @@ characters per token; using the low end over-reserves rather than under-reserves
 worker reports cost from the real token counts."""
 
 
-API_BASE = "https://tinker.thinkingmachines.dev/services/tinker-prod/api/v1"
+DEFAULT_BASE = "https://tinker.thinkingmachines.dev/services/tinker-prod"
+
+
+def api_base() -> str:
+    """Where the SDK will send requests: $TINKER_BASE_URL, else production (as tinker resolves it)."""
+    return (os.environ.get("TINKER_BASE_URL") or DEFAULT_BASE).rstrip("/") + "/api/v1"
 
 
 def preflight(timeout: float = 20) -> None:
@@ -94,7 +99,7 @@ def preflight(timeout: float = 20) -> None:
     import urllib.request
 
     key = os.environ.get(KEY_ENV, "")
-    req = urllib.request.Request(f"{API_BASE}/get_server_capabilities",
+    req = urllib.request.Request(f"{api_base()}/get_server_capabilities",
                                  headers={"X-API-Key": key, "Authorization": f"Bearer {key}",
                                           "User-Agent": "opentrain"})
     try:

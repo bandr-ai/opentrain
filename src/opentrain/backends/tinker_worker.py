@@ -131,6 +131,17 @@ def run(store: JobStore, job: dict[str, Any]) -> None:
         tokenizer = training.get_tokenizer()
         build = _hf_datums if missing_modules("tinker_cookbook") else _cookbook_datums
     datums = build(rows, tokenizer, spec, log)
+    def trains(d) -> bool:
+        w = d.loss_fn_inputs["weights"]
+        return any(float(x) for x in getattr(w, "data", w))
+
+    kept = [d for d in datums if trains(d)]
+    if len(kept) < len(datums):
+        log(f"left out {len(datums) - len(kept)} example(s) whose answers start after max_tokens ({spec.max_tokens})")
+    if not kept:
+        raise RuntimeError(f"every example's answers start after max_tokens ({spec.max_tokens}): "
+                           "raise max_tokens or shorten the examples")
+    datums = kept
     log(f"{len(datums)} examples, {sum(d.model_input.length for d in datums)} tokens per epoch")
 
     rng = random.Random(spec.extra.get("seed", 0))
