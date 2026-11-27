@@ -264,3 +264,18 @@ def test_harness_bookkeeping_calls_are_left_out_not_the_whole_request():
     (ex,), skipped = examples(t)
     names = [c["function"]["name"] for m in ex["messages"] if m["role"] == "assistant" for c in m["tool_calls"]]
     assert names == ["edit_file", "finish"] and not skipped
+
+
+def test_the_report_holds_counts_not_names(tmp_path, monkeypatch):
+    from opentrain import report
+
+    monkeypatch.setattr("opentrain.traces.readers.scan", lambda: [{"label": "Claude Code", "count": 3}])
+    d = tmp_path / ".opentrain" / "traces"
+    d.mkdir(parents=True)
+    (d / "index.jsonl").write_text(json.dumps({"agent": "claude-code", "repo": "/work/acme-secret-repo", "edits": 2,
+                                               "examples": 1, "moments": {"corrected": 1}}) + "\n")
+    (d / "themes.json").write_text(json.dumps([{"name": "uses the acme billing API wrong", "chosen": True}]))
+    text = report.render(report.collect(tmp_path))
+    assert "acme" not in text
+    assert '"changed_code": 1' in text and '"chosen": 1' in text
+    assert "acme billing" in report.render(report.collect(tmp_path, names=True))

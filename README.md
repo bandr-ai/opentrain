@@ -37,7 +37,7 @@ $ opentrain web        # the web app (or: opentrain, for the terminal app)
 ## Install
 
 ```bash
-uv tool install "opentrain-cli[modal] @ git+https://github.com/bandr-ai/opentrain"
+uv tool install "opentrain-cli[modal]"   # add ,tinker to train on Tinker
 modal setup                     # once: signs in to your Modal account
 cd your-project && opentrain web
 ```
@@ -45,6 +45,8 @@ cd your-project && opentrain web
 Python 3.11+. The engine runs on whatever you already have: your own **Claude Code** login (no key
 needed), or an Anthropic, OpenAI, OpenRouter, Together, Groq or Fireworks key, or a local model.
 `/connect` adds keys; `/models` picks one.
+
+Beta users: start with [docs/BETA.md](https://github.com/bandr-ai/opentrain/blob/main/docs/BETA.md) (what you need, what to try, where your data goes, how to send feedback).
 
 ## Ways in
 
@@ -287,7 +289,7 @@ For datasets, `dataset_recipe` picks the settings from the task kind (labels, st
 free-form answers, read from the grader and the answers), the number of rows and the base model's
 size, says what to do first (distil missing answers with a strong teacher) and what to try if the
 run does not beat the baseline. `dataset_train` applies it unless told otherwise. Measured results
-are in [docs/RECIPES.md](docs/RECIPES.md).
+are in [docs/RECIPES.md](https://github.com/bandr-ai/opentrain/blob/main/docs/RECIPES.md).
 
 ### Coding-agent work: recipes are skills
 
@@ -331,4 +333,4 @@ uv sync --extra dev
 .venv/bin/pytest -q
 ```
 
-Plan and roadmap: [docs/PLAN.md](docs/PLAN.md). Results on real sessions: [docs/FINDINGS.md](docs/FINDINGS.md).
+Plan and roadmap: [docs/PLAN.md](https://github.com/bandr-ai/opentrain/blob/main/docs/PLAN.md). Results on real sessions: [docs/FINDINGS.md](https://github.com/bandr-ai/opentrain/blob/main/docs/FINDINGS.md).

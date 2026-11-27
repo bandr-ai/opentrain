@@ -16,3 +16,16 @@ jobs:
       - run: git config --global user.email ci@example.com && git config --global user.name ci
       - run: uv run ruff check .
       - run: uv run pytest -q
+
+  package:
+    # Build what a release would publish and run it from a clean install, so a packaging break
+    # shows up on the PR, not on release day.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - run: uvx twine check --strict dist/*
+      - run: scripts/smoke_wheel.sh dist/*.whl

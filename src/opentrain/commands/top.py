@@ -26,7 +26,7 @@ from typing import Any
 
 from .. import __version__
 
-VERBS = ("run", "serve", "web", "mcp", "login", "traces", "attach", "pair", "stop", "export", "watch", "model", "debug", "help")
+VERBS = ("run", "serve", "web", "mcp", "login", "traces", "report", "attach", "pair", "stop", "export", "watch", "model", "debug", "help")
 
 
 def _client(directory: Path, url: str | None = None, password: str | None = None):
@@ -457,6 +457,12 @@ def parser() -> argparse.ArgumentParser:
     tr.add_argument("--since", default=None, help="only logs since this date (ISO)")
     tr.set_defaults(fn=cmd_traces)
 
+    rp = sub.add_parser("report", help="what happened in this project, counts only, to send with feedback")
+    rp.add_argument("--dir", default=".", help="the project (default: here)")
+    rp.add_argument("--names", action="store_true", help="include the names of the themes you were shown")
+    rp.add_argument("--json", action="store_true", help="the raw JSON only")
+    rp.set_defaults(fn=cmd_report)
+
     at = sub.add_parser("attach", help="the terminal app against a server elsewhere")
     at.add_argument("url")
     at.add_argument("--password", default=None)
@@ -487,6 +493,16 @@ def parser() -> argparse.ArgumentParser:
 
     sub.add_parser("debug", help="every pipeline step on its own: opentrain debug --help")
     return p
+
+
+def cmd_report(a) -> int:
+    import json as _json
+
+    from ..report import collect, render
+
+    r = collect(Path(a.dir).resolve(), names=a.names)
+    print(_json.dumps(r, indent=1, default=str) if a.json else render(r))
+    return 0
 
 
 def cmd_traces(a) -> int:
