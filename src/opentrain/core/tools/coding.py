@@ -207,11 +207,14 @@ def themes_set(ctx, themes: list[dict[str, Any]]) -> Any:
         if not name:
             raise ToolError("every theme needs a name")
         ev = [str(e) for e in (t.get("evidence") or [])][:50]
+        sessions = len({e.split(":")[0] for e in ev})  # distinct traces, not moments
         out.append({"name": name[:80], "description": str(t.get("description") or "")[:600], "evidence": ev,
-                    "count": int(t.get("count") or len(ev)), "fix": str(t.get("fix") or "")[:400],
+                    "count": int(t.get("count") or len(ev)), "sessions": sessions,
+                    "trainable": t.get("trainable") is not False, "fix": str(t.get("fix") or "")[:400],
                     "chosen": old.get(name, {}).get("chosen", bool(t.get("chosen", False)))})
     path.write_text(json.dumps(out, indent=1))
-    return {"themes": out, "note": "The person picks which to fix (web app, or ask with question)."}
+    return {"themes": out, "note": "They show on the data card as evidence. Ask one yes/no only for a trainable "
+                                   "theme seen in 5+ sessions (data/diagnose)."}
 
 
 def themes(ctx) -> Any:
