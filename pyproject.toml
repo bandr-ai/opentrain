@@ -6,11 +6,14 @@ build-backend = "hatchling.build"
 # The command and the import are both `opentrain`; the PyPI names `opentrain` and `opentrain-ai`
 # belong to unrelated projects (as `opencode` ships as `opencode-ai`).
 name = "opentrain-cli"
-version = "0.2.0.dev0"
-description = "The open source post-training harness. Turn your agent sessions into a model that does your work."
+dynamic = ["version"]
+description = "The open post-training harness: a small model that does your work, from your coding-agent traces or your data, proved before it ships."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "aiohttp>=3.10",   # the server, its SSE stream, and provider streaming
+    "textual>=1.0",    # the terminal app
+]
 keywords = ["post-training", "fine-tuning", "lora", "coding-agents", "continual-learning", "evals"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -24,20 +27,28 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# Trainer backends. The core is stdlib only; each backend imports its SDK lazily.
-tinker = ["tinker>=0.40", "tinker-cookbook>=0.7.1"]
+# Engine providers. Claude Code (your own login) and OpenAI-compatible endpoints need nothing extra.
+anthropic = ["anthropic>=1.0"]
+# Trainer backends. Each imports its SDK lazily, so the harness runs without them.
+tinker = ["tinker>=0.40", "tinker-cookbook>=0.7.1", "tml-renderers"]  # tml-renderers: Inkling models
 local = ["torch>=2.4", "transformers>=4.57", "peft>=0.13", "trl>=1.18", "datasets>=4.7"]
+modal = ["modal>=1.6"]  # train and serve on your Modal account
 serve-local = ["vllm"]  # Linux + CUDA only
-dev = ["pytest>=8", "ruff>=0.9"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.9"]
 
 [project.scripts]
 opentrain = "opentrain.cli:main"
 ot = "opentrain.cli:main"
+opentrain-cli = "opentrain.cli:main"  # so `uvx opentrain-cli traces` works with nothing installed
 
 [project.urls]
 Homepage = "https://github.com/bandr-ai/opentrain"
 Source = "https://github.com/bandr-ai/opentrain"
 Issues = "https://github.com/bandr-ai/opentrain/issues"
+Changelog = "https://github.com/bandr-ai/opentrain/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/opentrain/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/opentrain"]
@@ -47,6 +58,7 @@ packages = ["src/opentrain"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 target-version = "py311"

@@ -37,7 +37,7 @@ def test_default_trainfile_parses():
     assert trainfile.parse(trainfile.DEFAULT).heldout_fraction == pytest.approx(0.3)
 
 
-@pytest.mark.parametrize("bad", ["goal  vibes", "budget  lots", "colour  blue", "goal  speed\ngoal  cost",
+@pytest.mark.parametrize("bad", ["goal", "budget  lots", "colour  blue", "goal  speed\ngoal  cost",
                                  "runtime  emacs", "heldout  150%"])
 def test_trainfile_rejects(bad):
     with pytest.raises(trainfile.TrainfileError):

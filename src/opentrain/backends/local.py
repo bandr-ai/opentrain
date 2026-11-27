@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from ..plugs import JobStatus, TrainSpec
-from . import JobStore, missing_modules, spec_from_dict, worker_main
+from . import JobStore, missing_modules, only_methods, spec_from_dict, worker_main
 
 DEPS = ("torch", "transformers", "peft", "trl", "datasets")
 
@@ -59,6 +59,7 @@ class LocalBackend:
 
     def estimate(self, spec: TrainSpec) -> float:
         """Your own hardware: no dollars are reserved against the budget."""
+        only_methods("local", spec)
         return 0.0
 
     def launch(self, spec: TrainSpec) -> str:

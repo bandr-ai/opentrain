@@ -57,10 +57,12 @@ def spec(data: Path, **kw) -> TrainSpec:
 
 def test_registry_lists_every_backend(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENTRAIN_FAKE_BACKEND", raising=False)
+    monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data-home"))  # no stored keys
     rows = {name: (ok, why) for name, ok, why in list_backends(tmp_path)}
-    assert set(rows) == set(BACKENDS) == {"tinker", "local", "fireworks", "fake"}
+    assert set(rows) == set(BACKENDS) == {"tinker", "modal", "runpod", "local", "fireworks", "fake"}
     assert rows["fake"][0] is False and "OPENTRAIN_FAKE_BACKEND" in rows["fake"][1]
-    assert rows["fireworks"][0] is False and "not implemented" in rows["fireworks"][1]
+    assert rows["fireworks"][0] is False and "fireworks" in rows["fireworks"][1].lower()
     assert all(isinstance(get_backend(n, tmp_path), TrainerBackend) for n in BACKENDS)
     with pytest.raises(KeyError):
         get_backend("nope", tmp_path)

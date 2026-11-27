@@ -11,16 +11,16 @@ did not pass, and never invent an instruction, a test or an answer.
 ## When to use
 
 - New sessions since the last mine (the Trainfile `watch` line fired), or the store is empty.
-- `opentrain bench yield` shows verified candidates that are not yet in the store.
+- `sessions_scan` shows sessions that could become tasks and are not yet in the store.
 - Lint broke tasks and you want them rebuilt from source.
 
 ## Steps
 
-1. **Judge the sessions.** `opentrain bench yield` shows the funnel: instruction, code changed, repo
-   state, tests in repo, checks green, committed reference. Read the top skip reasons before mining;
+1. **Judge the sessions.** `sessions_scan` (CLI: `opentrain debug bench`) shows the funnel:
+   instruction, code changed, repo state, tests in repo, checks green, committed reference. Read the top skip reasons before mining;
    a skip is information, not a bug to route around.
-2. **Mine.** `opentrain mine` (add `--include-repairable` to also take sessions whose tests did not
-   end green or never ran: the miner runs the tests itself). For each session it:
+2. **Mine.** `tasks_mine` (`include_repairable=true` also takes sessions whose tests did not end
+   green or never ran: the miner runs the tests itself). For each session it:
    - writes every prompt the person typed, in order and verbatim, as `instruction.md` (harness
      notices and PR-watch updates are left out; agent replies never go in, so nothing leaks);
    - uses the repo at the last commit before the session as the environment, and the first commit
@@ -35,8 +35,7 @@ did not pass, and never invent an instruction, a test or an answer.
      (see `data/heldout`).
 3. **Read the report.** The summary line counts every session; the full per-session report is
    `.opentrain/data/mine-<stamp>.json`. Group rejections by reason and fix the biggest group first.
-4. **Inspect a sample.** `opentrain task ls`, then `opentrain task show <id>` on two or three new
-   tasks: does the instruction ask for what the patch does? Is the test command sane?
+4. **Inspect a sample.** `tasks_list`, then `task_show` on two or three new tasks: does the instruction ask for what the patch does? Is the test command sane?
 
 ## Measure of success
 

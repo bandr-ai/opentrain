@@ -189,7 +189,9 @@ class DirectRunner:
         env = dict(os.environ)
         if self.endpoint.api_key_env:
             env.pop(self.endpoint.api_key_env, None)  # the agent's shell never sees the model key
-        proc = subprocess.Popen(["bash", "-c", command], cwd=workspace, env=env, text=True, errors="replace",
+        from ..core.sandbox import wrap
+
+        proc = subprocess.Popen(wrap(["bash", "-c", command]), cwd=workspace, env=env, text=True, errors="replace",
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 start_new_session=True)
         try:

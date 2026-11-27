@@ -7,10 +7,10 @@ and the harness design. This file tracks where the code stands against it.
 | Milestone | Plan | Code |
 | --- | --- | --- |
 | v0.1 bench | Task yield, time breakdown, baselines, one specialist by hand, cross-person check | `opentrain bench`, `bench models`, `mine` run on real sessions. The specialist-by-hand and the cross-person check need training compute and both founders' sessions |
-| v0.2 train | Server + engine, trainer/evaluator, Trainfile, headless runtime, one backend, goal/speed, export | All present. Tinker training is written to the documented SDK but has not run against a real key |
+| v0.2 train | Server + engine, trainer/evaluator, Trainfile, headless runtime, one backend, goal/speed, export | The harness: one server per user with an event-sourced store, its own agent loop (train, plan, data, monitor, evaluator), tools, permissions and budget, server-owned jobs, an OS sandbox, the evaluator in its own process, a provenance gate, `/connect`, and the terminal app, `run`, `web`, `attach` as clients. Claude Code under the user's login runs as the engine. Tinker training is written to the documented SDK but has not run against a real key |
 | v0.3 watch | Triggers, unattended runs, promote-if-better, rollback on live drop, fix goal, weekly note | `watch` (sessions/flag/nightly triggers, rollback from live error and handoff rates), `fix`, `revert`. Weekly note: not yet |
 | v0.4 mount | Direct runtime, more backends and models, more session sources, web UI, recipe kit, portable update | Direct runtime, web UI, `skill add`, `export`. Codex/pi/opencode session import and the portable update package: not yet |
-| v0.5 plan | Capability map, engine chooses recipes, cost goal, RFT, "no training needed" | Agent mode (`opentrain run`) with the train tools is the seed; the rest not yet |
+| v0.5 plan | Capability map, engine chooses recipes, cost goal, RFT, "no training needed" | The train agent already picks recipes (skills) and can stop at the data stage; the capability map, RFT and the cost goal: not yet |
 | v0.6 pipe | Non-coding traces, bring-your-own evals, graders | Not yet |
 | v0.7 merge | Teams, pooled loops, commons | Not yet |
 

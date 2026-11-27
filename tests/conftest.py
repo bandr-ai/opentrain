@@ -82,3 +82,31 @@ def repo(tmp_path: Path) -> Path:
     git(r, "add", ".")
     git(r, "commit", "-q", "-m", "base", when=T0 - timedelta(hours=1))
     return r
+
+
+@pytest.fixture
+def live(tmp_path, monkeypatch):
+    """A running server whose default project is ``tmp_path / 'proj'``, with its own config, data
+    and state homes so nothing of the real user's leaks in or out."""
+    import sys
+
+    for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
+        monkeypatch.setenv(var, str(tmp_path / var.lower()))
+    for var in ("ANTHROPIC_API_KEY", "TINKER_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from harness import LiveServer
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    srv = LiveServer(proj)
+    srv.proj = proj
+    yield srv
+    srv.stop()
+
+
+@pytest.fixture(autouse=True)
+def _own_cookie_key(tmp_path, monkeypatch):
+    """No test writes the real user's browser sign-in key."""
+    monkeypatch.setenv("OPENTRAIN_COOKIE_KEY_FILE", str(tmp_path / "cookie.key"))

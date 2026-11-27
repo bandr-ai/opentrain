@@ -167,7 +167,8 @@ def cmd_bench(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="opentrain", description="The open harness for training models.")
+    """The pipeline commands, kept under ``opentrain debug`` (the engine's tools do this work now)."""
+    p = argparse.ArgumentParser(prog="opentrain debug", description="OpenTrain's pipeline steps, one at a time.")
     p.add_argument("--version", action="version", version=f"opentrain {__version__}")
     _common_state(p)
     sub = p.add_subparsers(dest="cmd")
@@ -215,7 +216,7 @@ def _common_state(p) -> None:
     p.add_argument("--state", dest="state", default=None, help=argparse.SUPPRESS)
 
 
-def main(argv: list[str] | None = None) -> int:
+def debug_main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if not getattr(args, "fn", None):
         from .commands.loop import cmd_home
@@ -226,6 +227,12 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nInterrupted", file=sys.stderr)
         return 130
+
+
+def main(argv: list[str] | None = None) -> int:
+    from .commands.top import main as top_main
+
+    return top_main(argv)
 
 
 if __name__ == "__main__":

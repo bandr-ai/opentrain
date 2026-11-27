@@ -148,7 +148,7 @@ def test_data_skills_policy_race(state):
     sk = api.skills(state)["skills"]
     assert sk[0]["name"] == "triage" and sk[0]["description"] == "Sort failing tasks"
     p = api.policy(state)
-    assert p["exists"] and p["parsed"]["goal"] == "speed" and p["error"] is None
+    assert p["exists"] and p["parsed"]["goal"] == "custom" and p["error"] is None
     race = api.race(state)
     assert race["file"] == "race-1.json" and race["race"]["winner"] == "v2"
 
@@ -237,12 +237,12 @@ def test_revert(server, state):
 def test_policy_post(server, state):
     path = state.parent / "Trainfile"
     before = path.read_text()
-    status, _, body = _post(server, "/api/policy", {"text": "goal  fastest\n"})
-    assert status == 400 and "goal must be one of" in json.loads(body)["error"]
+    status, _, body = _post(server, "/api/policy", {"text": "budget  lots\n"})
+    assert status == 400 and "dollar amount" in json.loads(body)["error"]
     status, _, body = _post(server, "/api/policy", {"text": "bogus key  1\n"})
     assert status == 400 and json.loads(body)["invalid"]
     assert path.read_text() == before
-    new = before.replace("goal         speed", "goal         fix")
+    new = before.replace("goal         better than the current model on my held-out examples", "goal         fix")
     status, _, body = _post(server, "/api/policy", {"text": new})
     assert status == 200, body
     assert json.loads(body)["parsed"]["goal"] == "fix"

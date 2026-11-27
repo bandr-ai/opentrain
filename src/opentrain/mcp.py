@@ -21,6 +21,7 @@ import argparse
 import dataclasses
 import json
 import sys
+import time
 import traceback
 from dataclasses import asdict
 from pathlib import Path
@@ -34,7 +35,7 @@ from .plugs import TrainSpec
 from .record import RunRecord
 from .registry import Registry
 from .tasks import HeldoutStore, Store
-from .trainfile import Trainfile, find, load  # noqa: F401
+from .trainfile import Trainfile, find, for_project, load  # noqa: F401
 
 PROTOCOL = "2025-06-18"
 
@@ -91,7 +92,7 @@ class Server:
         if role not in TOOLS_BY_ROLE:
             raise ValueError(f"unknown role {role!r}")
         self.state, self.role = state, role
-        self.tf = tf or load(find(state.parent))
+        self.tf = tf or for_project(state.parent)
         self.record = RunRecord(state)
         self.run = self.record.get(run_id) if run_id else self.record.open(f"mcp:{role}", {"goal": self.tf.goal})
         self.ledger = Ledger(state, self.tf.budget)
@@ -156,18 +157,30 @@ class Server:
         return {"teacher": who, "attempts": len(atts), "passed": sum(a.passed is True for a in atts),
                 "never_passed": fr.none_passed, "always_passed": fr.all_passed, "rates": fr.rates}
 
-    def t_data_build(self, task_ids: list[str] | None = None) -> Any:
+    def t_data_build(self, task_ids: list[str] | None = None, traces: str = "auto") -> Any:
+        """``traces``: "auto" (imported trace examples when there are any), "all", "themes" (only requests
+        a chosen theme points at), or "none". Teacher passes on training tasks always come first."""
+        from .core.tools.coding import public_examples, trace_examples
         from .data.sft import build_sft
         from .sample import load_attempts, shortest
 
         chosen = shortest(load_attempts(self.state, task_ids))
-        if not chosen:
-            raise ToolError("no verified passes yet; run sample_run first")
-        m = build_sft(chosen, self.state, run=self.run)
-        return {k: m[k] for k in ("file", "examples", "sha256", "skipped")}
+        extra, dropped = ([], {}) if traces == "none" else trace_examples(self.state, themes_only=traces == "themes")
+        public = [] if traces == "none" else public_examples(self.state)
+        extra = extra + public
+        if not chosen and not extra:
+            raise ToolError("no verified passes and no imported trace examples yet; run sample_run, or traces_import")
+        m = build_sft(chosen, self.state, run=self.run, extra=extra)
+        out = {k: m[k] for k in ("file", "examples", "sha256", "skipped")}
+        out["from_teacher"], out["from_traces"] = m["examples"] - len(extra), len(extra) - len(public)
+        out["from_public"] = len(public)
+        if dropped:
+            out["traces_left_out"] = dropped
+        return out
 
     def t_train_launch(self, epochs: int | None = None, lora_rank: int | None = None,
-                       learning_rate: float | None = None) -> Any:
+                       learning_rate: float | None = None, method: str | None = None,
+                       extra: dict[str, Any] | None = None, batch_size: int | None = None) -> Any:
         from .backends import get_backend
 
         data = self.state / "data" / "train.jsonl"
@@ -182,10 +195,14 @@ class Server:
         ok, why = backend.available()
         if not ok:
             raise ToolError(f"backend {self.tf.trainer} unavailable: {why}")
-        kw = {k: v for k, v in {"epochs": epochs, "lora_rank": lora_rank, "learning_rate": learning_rate}.items()
+        kw = {k: v for k, v in {"epochs": epochs, "lora_rank": lora_rank, "learning_rate": learning_rate,
+                                "method": method, "extra": extra, "batch_size": batch_size}.items()
               if v is not None}
         spec = TrainSpec(base_model=self.tf.base_model, data=data, name=f"opentrain-{self.run.run_id}", **kw)
-        est = backend.estimate(spec)
+        try:
+            est = backend.estimate(spec)
+        except (ValueError, RuntimeError) as exc:
+            raise ToolError(str(exc)) from None
         try:
             rid = self.ledger.reserve(est, f"training on {self.tf.trainer}", self.run.run_id)
         except BudgetExceeded as exc:
@@ -207,10 +224,26 @@ class Server:
         launched = self._job_event(job_id)
         st = get_backend(launched["backend"], self.state).status(job_id)
         out: dict[str, Any] = {"state": st.state, "progress": st.progress, "cost_usd": st.cost_usd,
-                               "detail": st.detail, "logs": st.logs[-10:]}
-        if not st.done and st.cost_usd > launched["estimate_usd"] + self.ledger.remaining(self.run.run_id):
-            get_backend(launched["backend"], self.state).cancel(job_id)
-            out["cancelled"] = "over budget"
+                               "detail": st.detail, "logs": st.logs[-10:], "loss": st.loss,
+                               "reward": st.reward}
+        why = self._note(job_id, "cancel")
+        if why and st.done:
+            out["why"] = why  # why the server ended it, for the agent and the user
+        limit = launched["estimate_usd"] + self.ledger.remaining(self.run.run_id)
+        if not st.done and st.cost_usd > limit:
+            backend = get_backend(launched["backend"], self.state)
+            asked = self._stop_asked(job_id)
+            # first ask the job to end at its next step and keep its adapter; cancel only if it runs on
+            if asked is None and hasattr(backend, "stop_early") and backend.stop_early(job_id):
+                self._stop_asked(job_id, time.time())
+                self._note(job_id, "cancel", f"the server asked it to stop early: it cost ${st.cost_usd:.2f}, past "
+                                             f"what the budget had left for it (${limit:.2f})")
+                out["stopping"] = "over budget: ending at the next step, keeping the adapter trained so far"
+            elif asked is None or time.time() - asked > 900 or st.cost_usd > limit * 1.25 + 0.25:
+                backend.cancel(job_id)
+                out["cancelled"] = "over budget"
+                self._note(job_id, "cancel", f"the server stopped it: it cost ${st.cost_usd:.2f}, past what the "
+                                             f"budget had left for it (${limit:.2f})")
         if st.done and not any(e["kind"] == "job" and e["data"].get("job_id") == job_id
                                and e["data"].get("state") in ("succeeded", "failed", "cancelled")
                                for e in self.run.events()):
@@ -218,11 +251,37 @@ class Server:
             self.run.add("spend", usd=st.cost_usd, what=f"training job {job_id}")
             self.run.add("job", job_id=job_id, backend=launched["backend"], state=st.state)
             if st.state == "succeeded" and st.checkpoint:
+                rank = int((launched.get("spec") or {}).get("lora_rank") or 32)
                 v = Registry(self.state).add(run_id=self.run.run_id, base_model=self.tf.base_model,
-                                             backend=launched["backend"], checkpoint=st.checkpoint)
+                                             backend=launched["backend"], checkpoint=st.checkpoint,
+                                             serving={"lora_rank": rank})
                 self.run.add("checkpoint", version=v.version, checkpoint=st.checkpoint)
                 out["version"] = v.version
         return out
+
+    def _note(self, job_id: str, kind: str, text: str | None = None) -> str | None:
+        """A short note kept beside a job (why the server stopped it)."""
+        p = self.state / "jobs" / f"{job_id}.{kind}-why"
+        if text is not None:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+            return text
+        try:
+            return p.read_text()
+        except OSError:
+            return None
+
+    def _stop_asked(self, job_id: str, at: float | None = None) -> float | None:
+        """When this job was asked to stop early (kept beside the job's own record)."""
+        p = self.state / "jobs" / f"{job_id}.stop"
+        if at is not None:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(str(at))
+            return at
+        try:
+            return float(p.read_text())
+        except (OSError, ValueError):
+            return None
 
     def t_train_cancel(self, job_id: str) -> Any:
         from .backends import get_backend
@@ -230,11 +289,48 @@ class Server:
         get_backend(self._job_event(job_id)["backend"], self.state).cancel(job_id)
         return {"cancelling": job_id}
 
+    def _base_runner(self):
+        """The untrained student (the Trainfile's base model) on its trainer's serving, as a coding agent."""
+        from .runtime import DirectRunner
+        from .serving import ServingError
+
+        base, trainer = self.tf.base_model, self.tf.trainer
+        try:
+            if trainer == "modal":
+                from .backends import modal_backend
+
+                ep = modal_backend.endpoint(base)
+                modal_backend.wait_ready(ep)
+            elif trainer == "runpod":
+                from .backends import runpod_backend
+
+                ep = runpod_backend.endpoint(base)
+            elif trainer == "tinker":
+                from .backends import tinker
+                from .plugs import Endpoint
+
+                ep = Endpoint(base_url=tinker.OPENAI_BASE, model=base, api_key_env=tinker.KEY_ENV)
+            else:
+                raise ToolError(f"scoring the untrained {base} needs it served on modal, runpod or tinker; the trainer is "
+                                f"{trainer}")
+        except (ServingError, RuntimeError) as exc:
+            raise ToolError(f"could not serve {base}: {exc}") from None
+        return DirectRunner(ep, max_steps=60, name=f"base:{base}")
+
     def _scores(self, version: str) -> list[gate_mod.Score]:
         from .engine import baseline_name, specialist_runner
         from .evaluator import EvalBroken
 
         reg = Registry(self.state)
+        if version == "base":
+            ev = Evaluator(self.state, self.tf.eval_cap)
+            name = f"base:{self.tf.base_model}"
+            try:
+                scores = ev.request(self._base_runner(), name, self.run)
+            except (EvalCapReached, EvalBroken) as exc:
+                raise ToolError(str(exc)) from None
+            ev.save_scores(name, scores)
+            return scores
         if version == baseline_name(self.tf, reg):
             raise ToolError(f"{version} is the live version; its scores are the baseline and are not re-requested here")
         ev = Evaluator(self.state, self.tf.eval_cap)

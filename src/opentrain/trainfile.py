@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 GOALS = ("speed", "fix", "cost")
+"""Goals with a built-in recipe for coding-agent work. Any other goal is written in plain words
+(``goal  draft support replies in our tone``) and is measured on the project's datasets."""
 RUNTIMES = {"claude -p": "claude", "claude": "claude", "codex exec": "codex", "codex": "codex", "direct": "direct"}
 PERIODS = {"run": None, "day": 1, "week": 7, "month": 30}
 
@@ -31,16 +33,37 @@ KEYS = ("goal", "budget", "promote", "runtime", "trainer", "base model", "data",
 
 DEFAULT = """\
 # Trainfile: what OpenTrain may do on your behalf. The server enforces every line.
-goal         speed
+# goal: say in plain words what the model should get better at.
+goal         better than the current model on my held-out examples
 budget       $20 a week, model tokens and compute together
 promote      beats current on held-out, no task regresses
-runtime      claude -p
 trainer      tinker
 base model   Qwen/Qwen3-8B
-data         my agent sessions, redacted, local until I approve
+data         local until I approve
 heldout      30%
 eval cap     8 per run
 """
+
+
+def ready_trainer() -> str:
+    """The trainer a new project starts with: the first of Modal and RunPod that is set up here, else Tinker."""
+    try:
+        from .backends import missing_modules
+        from .backends.modal_backend import configured
+        from .backends.runpod_backend import api_key
+
+        if not missing_modules("modal") and configured()[0]:
+            return "modal"
+        if api_key():
+            return "runpod"
+    except Exception:  # noqa: BLE001 - a default must never fail
+        pass
+    return "tinker"
+
+
+def default_text() -> str:
+    """``DEFAULT`` with the trainer that can run here."""
+    return DEFAULT.replace("trainer      tinker", f"trainer      {ready_trainer()}")
 
 
 class TrainfileError(ValueError):
@@ -68,13 +91,16 @@ class Watch:
 
 @dataclass(frozen=True)
 class Trainfile:
-    goal: str = "speed"
+    goal: str = "custom"
+    """A built-in recipe (``speed``, ``fix``, ``cost``) or ``custom``: see ``objective``."""
+    objective: str = ""
+    """The goal in the user's words."""
     budget: Budget = field(default_factory=lambda: Budget(20.0, 7, "$20 a week"))
     promote: str = "beats current on held-out, no task regresses"
     runtime: str = "claude"
     trainer: str = "tinker"
     base_model: str = "Qwen/Qwen3-8B"
-    data: str = "my agent sessions, redacted, local until I approve"
+    data: str = "local until I approve"
     heldout_fraction: float = 0.3
     eval_cap: int = 8
     watch: Watch | None = None
@@ -142,10 +168,12 @@ def parse(text: str, path: str | None = None) -> Trainfile:
 
     kw: dict = {"raw": raw, "path": path}
     if "goal" in raw:
-        goal = raw["goal"].split()[0].lower().removeprefix("goal/")
-        if goal not in GOALS:
-            raise TrainfileError(f"goal must be one of {', '.join(GOALS)}, not {goal!r}")
-        kw["goal"] = goal
+        words = raw["goal"].split()
+        if not words:
+            raise TrainfileError("goal needs words: what should the model get better at?")
+        first = words[0].lower().removeprefix("goal/") if words else ""
+        kw["goal"] = first if first in GOALS and len(words) == 1 else "custom"
+        kw["objective"] = raw["goal"].strip()
     if "budget" in raw:
         kw["budget"] = _budget(raw["budget"])
     if "promote" in raw:
@@ -185,8 +213,39 @@ def find(start: Path | None = None) -> Path | None:
     return None
 
 
+def for_project(directory: Path) -> Trainfile:
+    """The Trainfile governing ``directory``, or the defaults. Never looks at the process's cwd."""
+    path = find(Path(directory))
+    return parse(path.read_text(), str(path)) if path else parse(default_text())
+
+
 def load(path: Path | None = None) -> Trainfile:
     path = path or find()
     if path is None:
-        return parse(DEFAULT)
+        return parse(default_text())
     return parse(path.read_text(), str(path))
+
+
+def set_value(directory: Path, key: str, value: str) -> Path:
+    """Set one line of the project's Trainfile (writing the defaults first if there is none).
+
+    The other lines, comments and alignment are kept; the result must still parse.
+    """
+    if key not in KEYS:
+        raise TrainfileError(f"unknown setting {key!r}")
+    path = find(Path(directory)) or Path(directory) / "Trainfile"
+    text = path.read_text() if path.exists() else default_text()
+    lines, done = text.splitlines(), False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            k, _ = _split(stripped.split(" #", 1)[0])
+            if k == key:
+                lines[i] = f"{key:<12} {value}"
+                done = True
+    if not done:
+        lines.append(f"{key:<12} {value}")
+    new = "\n".join(lines) + "\n"
+    parse(new, str(path))
+    path.write_text(new)
+    return path

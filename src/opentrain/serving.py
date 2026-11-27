@@ -90,6 +90,26 @@ def endpoint_for(version: Version) -> Endpoint:
         from .backends import tinker
 
         return Endpoint(base_url=tinker.OPENAI_BASE, model=ck, api_key_env=tinker.KEY_ENV)
+    if version.backend == "modal" or ck.startswith("modal://"):
+        from .backends import modal_backend
+
+        try:
+            return modal_backend.endpoint(version.base_model, ck.removeprefix("modal://"),
+                                          int(s.get("lora_rank", 32)))
+        except modal_backend.ModalError as exc:
+            raise ServingError(str(exc)) from None
+    if version.backend == "runpod" or ck.startswith("runpod://"):
+        from .backends import runpod_backend
+
+        try:
+            return runpod_backend.endpoint(version.base_model, ck.removeprefix("runpod://"),
+                                           int(s.get("lora_rank", 32)))
+        except runpod_backend.RunPodError as exc:
+            raise ServingError(str(exc)) from None
+    if ck.startswith("fireworks-sampler://"):
+        raise ServingError(f"{version.version} is a Fireworks training snapshot: OpenTrain evals answer from it, "
+                           "but serving it to other apps needs a dedicated Fireworks deployment ($8/h and up, "
+                           "billed while up); set serving.base_url once you create one")
     if version.backend == "fireworks":
         return Endpoint(base_url=FIREWORKS_BASE, model=ck, api_key_env="FIREWORKS_API_KEY")
     if version.backend == "local":
@@ -178,7 +198,7 @@ def use_version(state: Path, version: str | None, why: str = "manual") -> None:
         Registry(Path(state)).get(version)
     p = _live_path(state)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps({"version": version, "at": _now(), "why": why}))
     tmp.replace(p)
 

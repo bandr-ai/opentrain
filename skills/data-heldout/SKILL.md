@@ -21,11 +21,11 @@ tasks, keep them away from every trainer, and keep the set fresh.
 ## Steps
 
 1. Set the share in the Trainfile: `heldout  30%` (the default).
-2. `opentrain mine` refreshes the split after every mine: new tasks after the cutoff go to
+2. `tasks_mine` refreshes the split after every mine: new tasks after the cutoff go to
    `.opentrain/heldout/`, owner-only (0700).
 3. `opentrain task ls` shows training tasks and only a count of held-out ones; `opentrain task show`
    refuses a held-out id.
-4. `opentrain lint` checks held-out verifiers too, reporting only id and reason.
+4. `tasks_lint` checks held-out verifiers too, reporting only id and reason.
 5. `opentrain export <dir>` writes training tasks, `train.jsonl` and a manifest. Add
    `--include-heldout` (writes `evals.jsonl` and the held-out folders) only for an evaluator you
    control.

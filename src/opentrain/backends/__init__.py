@@ -64,6 +64,13 @@ def pid_alive(pid: int | None) -> bool:
     return True
 
 
+def only_methods(backend: str, spec: TrainSpec, methods: tuple[str, ...] = ("sft",)) -> None:
+    """Refuse a training method this backend does not run, naming the ones that do."""
+    if spec.method not in methods:
+        raise ValueError(f"trainer {backend} runs {', '.join(methods)}, not {spec.method}; "
+                         "all four (sft, rejection, opd, rl) run on trainer modal or runpod")
+
+
 def spec_to_dict(spec: TrainSpec) -> dict[str, Any]:
     d = asdict(spec)
     d["data"] = str(spec.data)
@@ -169,18 +176,23 @@ class JobStore:
                                   detail=f"worker (pid {job['pid']}) exited without reporting; see job logs {jid}")
         return JobStatus(job_id=jid, state=job["state"], cost_usd=float(job.get("cost_usd") or 0.0),
                          checkpoint=job.get("checkpoint"), progress=job.get("progress"),
-                         detail=job.get("detail") or "", logs=self.logs(jid, tail=20))
+                         detail=job.get("detail") or "", logs=self.logs(jid, tail=20),
+                         loss=job.get("loss") if isinstance(job.get("loss"), (int, float)) else None,
+                         reward=job.get("reward") if isinstance(job.get("reward"), (int, float)) else None)
 
-    def spawn(self, module: str, job_id: str) -> int:
+    def spawn(self, module: str, job_id: str, *, python: list[str] | None = None,
+              env: dict[str, str] | None = None) -> int:
         """Start ``python -m <module> <job.json>`` detached, so the job survives this process exiting.
 
-        The child inherits the environment (that is how ``TINKER_API_KEY`` reaches it); keys are
-        never written to the job file.
+        ``python`` replaces the interpreter (a backend whose SDK needs another Python passes a
+        ``uv run ... python`` prefix). The child inherits the environment plus ``env`` (that is how
+        API keys reach it); keys are never written to the job file.
         """
         log = self.log_path(job_id).open("a")
-        proc = subprocess.Popen([sys.executable, "-m", module, str(self.path(job_id))],
+        proc = subprocess.Popen([*(python or [sys.executable]), "-m", module, str(self.path(job_id))],
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                start_new_session=True, close_fds=True)
+                                start_new_session=True, close_fds=True,
+                                env={**os.environ, **env} if env else None)
         log.close()
         self.update(job_id, pid=proc.pid)
         return proc.pid
@@ -226,6 +238,18 @@ def _fireworks(state: Path) -> TrainerBackend:
     return FireworksBackend(state)
 
 
+def _modal(state: Path) -> TrainerBackend:
+    from .modal_backend import ModalBackend
+
+    return ModalBackend(state)
+
+
+def _runpod(state: Path) -> TrainerBackend:
+    from .runpod_backend import RunPodBackend
+
+    return RunPodBackend(state)
+
+
 def _fake(state: Path) -> TrainerBackend:
     from .fake import FakeBackend
 
@@ -234,6 +258,8 @@ def _fake(state: Path) -> TrainerBackend:
 
 BACKENDS: dict[str, Callable[[Path], TrainerBackend]] = {
     "tinker": _tinker,
+    "modal": _modal,
+    "runpod": _runpod,
     "local": _local,
     "fireworks": _fireworks,
     "fake": _fake,

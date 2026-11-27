@@ -62,8 +62,9 @@ def example(attempt: Attempt, instruction: str) -> tuple[dict[str, Any] | None, 
 
 
 def build_sft(chosen: dict[str, Attempt], state: Path, out: Path | None = None, *,
-              run: Run | None = None) -> dict[str, Any]:
-    """Write ``train.jsonl`` (default ``<state>/data/train.jsonl``) and ``manifest.json`` beside it."""
+              run: Run | None = None, extra: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Write ``train.jsonl`` (default ``<state>/data/train.jsonl``) and ``manifest.json`` beside it.
+    ``extra``: more examples already in the runtime's format (imported traces), appended as they are."""
     held = HeldoutStore(state)
     leaked = sorted(t for t in {a.task_id for a in chosen.values()} | set(chosen) if t in held)
     if leaked:
@@ -96,11 +97,14 @@ def build_sft(chosen: dict[str, Attempt], state: Path, out: Path | None = None, 
                          "model": att.model, "steps": att.steps, "tool_calls": att.tool_calls,
                          "seconds": att.seconds})
 
+    for ex in extra or []:
+        rows.append(json.dumps(ex, sort_keys=True))
     out.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(r + "\n" for r in rows)
     out.write_text(body)
     manifest = {"format": "openai-chat-tools", "file": str(out), "sha256": _sha(body), "examples": len(rows),
-                "system_prompt_sha256": _sha(SYSTEM_PROMPT)[:16], "tasks": included, "skipped": skipped}
+                "system_prompt_sha256": _sha(SYSTEM_PROMPT)[:16], "tasks": included, "skipped": skipped,
+                "from_traces": len(extra or [])}
     write_json(out.with_name("manifest.json"), manifest)
     if run:
         run.add("data", **manifest)

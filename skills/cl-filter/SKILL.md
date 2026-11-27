@@ -7,7 +7,7 @@ description: Sort tasks by how often a model passes them (never, sometimes, alwa
 
 ## What the buckets mean
 
-| Bucket | For goal/speed (SFT on passes) | For RL (train/rft, later) |
+| Bucket | For goal/speed (SFT on passes) | For RL or rejection sampling |
 | --- | --- | --- |
 | never passed | nothing to imitate; needs a stronger teacher or a hint | no signal; drop |
 | sometimes | the best data: imitate the shortest pass | the best data |
@@ -15,7 +15,8 @@ description: Sort tasks by how often a model passes them (never, sometimes, alwa
 
 ## Steps
 
-1. `opentrain sample` has already printed the buckets; the `sample_run` tool returns them.
+1. The `sample_run` tool returns the buckets (CLI: `opentrain debug sample`).
 2. For never-passed tasks, try the frontier teacher before giving up; if it also fails, the task may
    need context the instruction lacks (see cl/mine: multi-prompt sessions).
-3. Record which bucket each task fell in with a `note` so the next run starts from it.
+3. Say which bucket each task fell in when you report, so the next run starts from it (the run
+   record keeps the sample results: `record_query`).
