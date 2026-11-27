@@ -63,6 +63,16 @@ class Questions:
             self.waiting[qid].set_result(answers)
         return self.project.store.get("question", qid)
 
+    def answer_with_message(self, qid: str, text: str) -> None:
+        """The person wrote a message instead of picking an option: it is their answer, in their words."""
+        q = self.project.store.get("question", qid)
+        fut = self.waiting.get(qid)
+        if q is None or fut is None or fut.done():
+            return
+        self.project.store.update("question", qid, {"status": "answered", "answers": [[text]], "free_text": True})
+        fut.set_exception(ToolError(f"Instead of picking an option, the person wrote: {text}\nTake that as their "
+                                    "answer (it may be a question for you: answer it first) and continue."))
+
     def pending(self, sid: str | None = None) -> list[dict[str, Any]]:
         return [q for q in self.project.store.find("question", session_id=sid)
                 if q.get("status") == "pending" and q["id"] in self.waiting]

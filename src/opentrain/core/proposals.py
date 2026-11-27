@@ -89,6 +89,11 @@ class Proposals:
         return self._settle(pid, {"approve": "approved", "change": "changed", "skip": "skipped"}[reply], message,
                             reply)
 
+    def answer_with_message(self, pid: str, text: str) -> None:
+        """The person wrote a message instead of choosing: the step waits, the agent answers them."""
+        if self.store.get("proposal", pid) is not None and pid in self.waiting:
+            self._settle(pid, "answered", text, "message")
+
     def _settle(self, pid: str, status: str, message: str | None, reply: str | None = None) -> dict[str, Any]:
         self.store.update("proposal", pid, {"status": status, "message": message, "time": {"replied": time.time()}})
         fut = self.waiting.get(pid)
@@ -135,6 +140,9 @@ async def propose_tool(ctx: ToolContext, title: str, why: str = "", cost_usd: fl
         return (f"Approved: {title}. Do it now. This step's approval covers {covered}"
                 + (f" up to about ${cost_usd:.2f}" if cost_usd else "") + "; anything beyond that still asks. "
                 "When it is done, report the result in a few lines and propose the next step.")
+    if reply == "message":
+        return (f"Not approved yet: instead of choosing, the person wrote: {message}\nAnswer that first, briefly. "
+                "Do not run this step unless they asked you to; propose it again afterwards if it still makes sense.")
     if reply == "change":
         return (f"The user wants this step changed: {message}\nAdjust the plan and propose again (or just do it if "
                 "the change makes it free and harmless).")
