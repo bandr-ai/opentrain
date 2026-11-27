@@ -207,7 +207,11 @@ class Server:
             rid = self.ledger.reserve(est, f"training on {self.tf.trainer}", self.run.run_id)
         except BudgetExceeded as exc:
             raise ToolError(str(exc)) from None
-        job_id = backend.launch(spec)
+        try:
+            job_id = backend.launch(spec)
+        except Exception as exc:
+            self.ledger.release(rid)  # nothing started: the reserved budget is free again
+            raise ToolError(f"could not start training: {exc}") from None
         self.run.add("job", job_id=job_id, backend=self.tf.trainer, state="launched", estimate_usd=est,
                      reservation=rid, spec={k: str(v) for k, v in asdict(spec).items()})
         return {"job_id": job_id, "estimate_usd": est}

@@ -75,6 +75,28 @@ def _rel(path: str, cwd: str | None) -> str:
     return path
 
 
+HOME = os.path.expanduser("~")
+
+
+def relative_command(cmd: str, root: str | None) -> str:
+    """A shell command as the trained model should write it: from the repository root. A leading
+    ``cd <repo> &&`` goes, paths under the repo become relative, and any other path under the home
+    folder starts with ``~``, so the model never learns this machine's folders."""
+    if root:
+        r = re.escape(root.rstrip("/"))
+        cmd = re.sub(rf"^\s*cd\s+(['\"]?){r}/?\1\s*(&&|;)\s*", "", cmd)
+        cmd = re.sub(rf"(['\"]?){r}/", r"\1", cmd)
+        cmd = re.sub(rf"(?<![\w./-]){r}(?=$|[\s'\";|&)])", ".", cmd)
+    return _home(cmd)
+
+
+def _home(text: str) -> str:
+    """The home folder written as ``~`` (``/Users/me/x`` -> ``~/x``, ``/Users/me`` -> ``~``)."""
+    if not HOME or HOME == "/":
+        return text
+    return re.sub(re.escape(HOME) + r"(?![\w.-])", "~", text)
+
+
 def _search_command(t: ToolUse) -> str:
     a = t.args
     pattern = a.get("pattern") or a.get("query") or a.get("regex")
@@ -146,14 +168,14 @@ def patch_calls(patch: str) -> list[tuple[str, dict[str, Any]]]:
 
 def translate(t: ToolUse, cwd: str | None) -> list[tuple[str, dict[str, Any], str]]:
     """(tool, arguments, result) for the runtime, for one tool use of any agent."""
-    out = clip(t.output or "")
+    out = _home(clip(t.output or ""))
     if t.kind == "shell":
         cmd = t.args.get("command")
         cmd = " ".join(map(str, cmd)) if isinstance(cmd, list) else cmd
         if not isinstance(cmd, str) or not cmd.strip():
             raise Skip("a shell call with no command")
         code = t.exit_code if t.exit_code is not None else (1 if t.is_error else 0)
-        return [("bash", {"command": cmd}, f"exit code {code}\n{out}")]
+        return [("bash", {"command": relative_command(cmd, cwd)}, f"exit code {code}\n{out}")]
     if t.kind == "read":
         args = {"path": _rel(str(t.args.get("path") or ""), cwd)}
         for k in ("offset", "limit"):
@@ -174,7 +196,8 @@ def translate(t: ToolUse, cwd: str | None) -> list[tuple[str, dict[str, Any], st
         res = out or "done"
         return [(n, {**a, "path": _rel(a["path"], cwd)} if "path" in a else a, res) for n, a in calls]
     if t.kind == "search":
-        return [("bash", {"command": _search_command(t)}, f"exit code {0 if not t.is_error else 1}\n{out}")]
+        return [("bash", {"command": relative_command(_search_command(t), cwd)},
+                 f"exit code {0 if not t.is_error else 1}\n{out}")]
     raise Skip(f"uses {t.name} ({t.kind}), which the trained model will not have")
 
 
@@ -195,7 +218,8 @@ def requests(trace: Trace) -> list[tuple[str, list[Step]]]:
 
 def example(prompt: str, steps: list[Step], cwd: str | None) -> Example:
     """One request as a chat example in the runtime's format, or ``Skip`` with the reason."""
-    msgs: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
+    msgs: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT},
+                                  {"role": "user", "content": _home(prompt)}]
     n = 0
     last_text = ""
     for s in steps:
@@ -217,11 +241,11 @@ def example(prompt: str, steps: list[Step], cwd: str | None) -> Example:
             if s.text.strip():
                 last_text = s.text.strip()
             continue
-        msgs.append({"role": "assistant", "content": s.text.strip(), "tool_calls": calls})
+        msgs.append({"role": "assistant", "content": _home(s.text.strip()), "tool_calls": calls})
         msgs.extend(results)
     if n == 0:
         raise Skip("a reply with no tool use (a question or a chat)")
-    summary = (last_text.splitlines() or ["done"])[0][:200]
+    summary = _home((last_text.splitlines() or ["done"])[0][:200])
     msgs.append({"role": "assistant", "content": "", "tool_calls": [{"id": f"call_{n + 1}", "type": "function",
                  "function": {"name": "finish", "arguments": json.dumps({"summary": summary})}}]})
     return {"messages": msgs, "tools": TOOLS}

@@ -304,7 +304,11 @@ def train(
             rid = ledger.reserve(est, f"training on {tf.trainer}", run.run_id)
         except BudgetExceeded as exc:
             raise EngineStop(f"budget: {exc}") from None
-        job_id = backend.launch(spec)
+        try:
+            job_id = backend.launch(spec)
+        except Exception:
+            ledger.release(rid)  # nothing started: the reserved budget is free again
+            raise
         run.add("job", job_id=job_id, backend=tf.trainer, state="launched", estimate_usd=est, spec=str(spec))
         say(f"Training    job {job_id} on {tf.trainer}")
         st = _await_job(backend, job_id, run, ledger, rid, say, poll, job_timeout, reserved=est)
