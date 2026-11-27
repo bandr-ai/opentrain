@@ -63,6 +63,18 @@ CHARS_PER_TOKEN = 3.0
 is over- rather than under-reserved."""
 
 
+def refuse_tool_calls(spec: TrainSpec) -> None:
+    """Coding data (agent traces, tool calls) is refused before anything is billed: a Fireworks
+    snapshot answers in text only here, so the trained model could not be scored on coding tasks."""
+    for line in Path(spec.data).read_text().splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row.get("tools") or any(m.get("tool_calls") for m in row.get("messages") or []):
+            raise ValueError("trainer fireworks cannot train coding agents yet (its snapshots are sampled without "
+                             "tools, so the result could not be scored); use trainer modal, runpod or tinker")
+
+
 def loop_estimate(spec: TrainSpec, train: float, sample: float) -> float:
     """Tokens sampled and trained by rejection sampling or RL, at Fireworks' prices, padded 30%."""
     from .gpu_train import settings
@@ -156,6 +168,7 @@ class FireworksBackend:
 
     def estimate(self, spec: TrainSpec) -> float:
         only_methods("fireworks", spec, ("sft", "rejection", "rl"))
+        refuse_tool_calls(spec)
         _, train, sample = MODELS[model_id(spec.base_model)]
         if spec.method != "sft":
             return loop_estimate(spec, train, sample)

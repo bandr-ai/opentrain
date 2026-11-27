@@ -114,6 +114,10 @@ def normalize(raw: dict[str, Any], *, input_key: str | None = None, output_key: 
                 continue  # tool turns are not part of a plain chat example
             msgs.append({"role": role, "content": _text(m.get("content", m.get("value")))})
     else:
+        if not output_key and _pick(raw, ("rejected",)) and (
+                not (input_key or _pick(raw, PROMPT_KEYS)) or _transcript(raw.get(_pick(raw, ("chosen",)) or ""))):
+            raise DatasetError("this is a preference dataset (chosen/rejected transcripts), not prompts with answers; "
+                               "pick a dataset with prompt and answer columns, or name them with input_key/output_key")
         ik = input_key or _pick(raw, PROMPT_KEYS)
         ok = output_key or _pick(raw, ANSWER_KEYS, exclude=ik)
         if ik is None:  # unfamiliar names: with one or two text columns the meaning is still clear
@@ -128,7 +132,10 @@ def normalize(raw: dict[str, Any], *, input_key: str | None = None, output_key: 
         sk = next((k for k in SYSTEM_KEYS if raw.get(k)), None)
         if sk:
             msgs.append({"role": "system", "content": _text(raw[sk])})
-        msgs.append({"role": "user", "content": _text(raw[ik])})
+        prompt = _text(raw[ik])
+        if not input_key and ik == "input" and isinstance(raw.get("instruction"), str) and raw["instruction"].strip():
+            prompt = f"{raw['instruction'].strip()}\n\n{prompt}"  # Alpaca: the instruction, then its input
+        msgs.append({"role": "user", "content": prompt})
         if ok and raw.get(ok) not in (None, ""):
             msgs.append({"role": "assistant", "content": _text(raw[ok])})
     if system and not any(m["role"] == "system" for m in msgs):
@@ -146,6 +153,12 @@ def with_system(row: dict[str, Any], system: str | None) -> dict[str, Any]:
     if not system or any(m["role"] == "system" for m in row["messages"]):
         return row
     return {**row, "messages": [{"role": "system", "content": system}, *row["messages"]]}
+
+
+def _transcript(v: Any) -> bool:
+    """A whole conversation (a list of turns, or "Human: ... Assistant: ..." text), not one answer."""
+    return isinstance(v, list) or (isinstance(v, str) and bool(re.search(r"(^|\n)\s*(Human|User):", v))
+                                   and bool(re.search(r"\n\s*Assistant:", v)))
 
 
 def _pick(raw: dict[str, Any], keys: tuple[str, ...], exclude: str | None = None) -> str | None:
@@ -215,15 +228,33 @@ def parse_bytes(data: bytes, filename: str) -> list[dict[str, Any]]:
 
 
 def _get_json(url: str, timeout: float = 30) -> Any:
-    req = urllib.request.Request(url, headers={"User-Agent": "opentrain"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (fixed https host)
-        return json.loads(r.read().decode())
+    """GET from the Hugging Face Hub, signed with the person's token when they connected one (gated
+    and private datasets need it); errors become a DatasetError that says what to do."""
+    headers = {"User-Agent": "opentrain"}
+    hf = (urllib.parse.urlparse(url).hostname or "").endswith("huggingface.co")
+    token = (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")) if hf else None
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    site = "Hugging Face" if hf else "Kaggle"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as r:  # noqa: S310
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403, 404) and hf:
+            hint = ("connect Hugging Face (/connect huggingface) and accept the dataset's terms on its page"
+                    if not token else "accept the dataset's terms on its Hugging Face page")
+            raise DatasetError(f"Hugging Face cannot show this dataset (HTTP {exc.code}): check the name, or if it "
+                               f"is private or gated, {hint}") from None
+        raise DatasetError(f"{site} answered HTTP {exc.code}; check the name, or try again in a minute") from None
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise DatasetError(f"could not reach {site}: {getattr(exc, 'reason', exc)}") from None
 
 
 def read_hf(dataset: str, *, split: str | None = None, config: str | None = None, limit: int = 2000,
             fetch=_get_json) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Rows of a public Hugging Face dataset through the datasets server (no extra install)."""
     q = urllib.parse.quote
+    dataset = dataset.strip().strip("/")
     splits = fetch(f"{HF_ROWS}/splits?dataset={q(dataset)}").get("splits") or []
     if not splits:
         raise DatasetError(f"Hugging Face has no viewable splits for {dataset!r} (private, gated or not converted)")

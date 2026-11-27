@@ -78,6 +78,54 @@ def completion_ids(tokenizer, prompt: list[dict[str, Any]], answer: str) -> tupl
     return p, a
 
 
+def trace_tokens(tok, row: dict[str, Any], max_tokens: int) -> list[dict[str, list[int]]]:
+    """Training examples (``input_ids``, ``labels`` = -100 except on assistant tokens) for one agent
+    trace, or for a prompt-completion pair whose answer calls tools.
+
+    One example per trace, with the loss on every assistant turn, when the chat template renders
+    earlier turns the same way once later ones are added (Qwen3.5, Qwen3.8). Templates that rewrite
+    history (Qwen3 drops old reasoning) get one example per assistant turn instead: the conversation
+    up to it, rendered as the model will see it, then that turn.
+    """
+    msgs = row.get("messages") or [*row["prompt"], *row["completion"]]
+    kw = {"tools": row["tools"]} if row.get("tools") else {}
+
+    def encode(text: str, spans: list[tuple[int, int]]) -> dict[str, list[int]]:
+        enc = tok(text, add_special_tokens=False, return_offsets_mapping=True)
+        ids = list(enc["input_ids"])
+        labels = [t if any(a <= s < b for a, b in spans) else -100 for t, (s, _) in zip(ids, enc["offset_mapping"])]
+        return {"input_ids": ids[:max_tokens], "labels": labels[:max_tokens]}
+
+    full = tok.apply_chat_template(msgs, tokenize=False, **kw)
+    turns, stable = [], True
+    for i, m in enumerate(msgs):
+        if m.get("role") != "assistant":
+            continue
+        before = tok.apply_chat_template(msgs[:i], tokenize=False, add_generation_prompt=True, **kw)
+        through = tok.apply_chat_template(msgs[: i + 1], tokenize=False, **kw)
+        if not through.startswith(before) or len(through) <= len(before):
+            raise ValueError(f"cannot find assistant turn {i} in the rendered conversation")
+        turns.append((before, through))
+        stable = stable and full.startswith(through)
+    if not turns:
+        raise ValueError("a training example must have an assistant turn")
+    out = [encode(full, [(len(b), len(t)) for b, t in turns])] if stable else \
+        [encode(t, [(len(b), len(t))]) for b, t in turns]
+    out = [ex for ex in out if any(x != -100 for x in ex["labels"][1:])]  # truncation can cut every answer
+    if not out:
+        raise ValueError(f"every assistant turn of this example starts after max_tokens ({max_tokens}); "
+                         "raise max_tokens or shorten the conversation")
+    return out
+
+
+def multi_turn(row: dict[str, Any]) -> bool:
+    """A row the plain prompt-completion path would flatten: a whole conversation, tool specs, or an
+    answer that calls tools."""
+    return bool(row.get("messages") or row.get("tools")
+                or any(m.get("tool_calls") for m in row.get("completion") or [])
+                or any(m.get("role") in ("assistant", "tool") for m in row.get("prompt") or []))
+
+
 def _trailing(tokenizer) -> set[int]:
     return {i for i in tokenizer.encode("\n", add_special_tokens=False)}
 
@@ -261,6 +309,31 @@ class Policy:
         self.sync()
         return total
 
+    def masked_step(self, batch: list[dict[str, list[int]]]) -> float:
+        """One optimizer step of cross-entropy on the labelled tokens of each example (agent traces:
+        every assistant turn), token mean over the batch. One sequence per forward pass, and only
+        the labelled positions are scored: traces are long."""
+        import torch
+
+        self.model.train()
+        tokens = sum(1 for ex in batch for t in ex["labels"][1:] if t != -100) or 1
+        total = 0.0
+        self.opt.zero_grad(set_to_none=True)
+        for ex in batch:
+            labels = torch.tensor(ex["labels"][1:], device=self.device)
+            keep = (labels != -100).nonzero()[:, 0]
+            if not len(keep):
+                continue
+            ids = torch.tensor([ex["input_ids"]], device=self.device)
+            logits = self.model(input_ids=ids).logits[0, :-1][keep].float()
+            loss = torch.nn.functional.cross_entropy(logits, labels[keep], reduction="sum") / tokens
+            loss.backward()
+            total += float(loss.detach())
+        torch.nn.utils.clip_grad_norm_(self.params, 1.0)
+        self.opt.step()
+        self.sync()
+        return total
+
     def set_lr(self, lr: float) -> None:
         for g in self.opt.param_groups:
             g["lr"] = lr
@@ -291,6 +364,10 @@ def run(spec: dict[str, Any], rows: list[dict[str, Any]], out_dir: str, emit: Ca
         raise ValueError(f"unknown method {method!r}; one of {', '.join(METHODS)}")
     if method in ("rejection", "rl") and grade is None:
         raise ValueError(f"{method} needs a grader that runs on the GPU (exact, contains, regex, json, number)")
+    if method != "sft" and any(multi_turn(r) for r in rows):
+        # checked before the model loads: a paid GPU should not start for a run that cannot work
+        raise ValueError(f"{method} samples single-turn answers; agent traces and tool-calling examples "
+                         "train with sft")
     t0 = time.time()
     rng = random.Random(int(settings(spec).get("seed", 0)))
 
@@ -302,6 +379,9 @@ def run(spec: dict[str, Any], rows: list[dict[str, Any]], out_dir: str, emit: Ca
     pol.sync()
     items = []
     for r in rows:
+        if multi_turn(r):
+            items += [{"trace": ex} for ex in trace_tokens(pol.tok, r, int(spec.get("max_tokens") or 8192))]
+            continue
         ref = (r["completion"][-1].get("content") or "") if r.get("completion") else ""
         p, a = completion_ids(pol.tok, r["prompt"], ref)
         items.append({"prompt": r["prompt"], "text": text_of(r["prompt"]), "reference": ref, "p": p, "a": a})
@@ -354,10 +434,17 @@ def _sft(pol, items, s, emit, grade, rng, t0):
             if pol.stop():
                 break
             pol.set_lr(cosine(step, total, lr))
-            loss = pol.step([(x["p"], x["a"]) for x in b], [1.0] * len(b))
+            traces, plain = [x["trace"] for x in b if "trace" in x], [x for x in b if "trace" not in x]
+            loss = pol.masked_step(traces + [_as_trace(x) for x in plain]) if traces else \
+                pol.step([(x["p"], x["a"]) for x in plain], [1.0] * len(plain))
             step += 1
             _emit_step(emit, t0, step, total, loss)
     return {"method": "sft", "steps": step}
+
+
+def _as_trace(x: dict[str, Any]) -> dict[str, list[int]]:
+    """A prompt-completion item as a masked example, to share a batch with traces."""
+    return {"input_ids": x["p"] + x["a"], "labels": [-100] * len(x["p"]) + x["a"]}
 
 
 def _grade_groups(pol, batch, groups, grade):
@@ -439,7 +526,8 @@ def _rl(pol, items, s, emit, grade, rng, t0):
         loss = pol.step(seqs, advs) if seqs else 0.0
         _emit_step(emit, t0, step + 1, steps, loss, reward=round(reward, 4),
                    note=f"{len(seqs)} samples with signal")
-    return {"method": "rl", "steps": steps, "reward_first": rewards_seen[0], "reward_last": rewards_seen[-1]}
+    return {"method": "rl", "steps": len(rewards_seen),
+            **({"reward_first": rewards_seen[0], "reward_last": rewards_seen[-1]} if rewards_seen else {})}
 
 
 def _opd(pol, items, s, emit, grade, rng, t0):

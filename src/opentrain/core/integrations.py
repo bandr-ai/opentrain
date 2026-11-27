@@ -71,6 +71,8 @@ def _from_catalog(trainer: str) -> list[dict[str, Any]]:
             for m in CATALOG if trainer in m.trainers]
 
 
+from ..backends.fireworks import MODELS as _FIREWORKS  # noqa: E402
+
 BASE_MODELS: dict[str, list[dict[str, Any]]] = {
     "tinker": [
         *_from_catalog("tinker"),
@@ -84,6 +86,8 @@ BASE_MODELS: dict[str, list[dict[str, Any]]] = {
     ],
     "modal": [*_from_catalog("modal"), *[m for m in GPU_MODELS if m["id"] not in {c.id for c in _CAT}]],
     "runpod": [*_from_catalog("runpod"), *[m for m in GPU_MODELS if m["id"] not in {c.id for c in _CAT}]],
+    "fireworks": [{"id": tok, "params": {"qwen3p6-35b-a3b": "35B MoE (3B active)"}.get(fid, "30B"),
+                   "note": f"serverless LoRA ({fid})"} for fid, (tok, _, _) in _FIREWORKS.items()],
     "local": [
         {"id": "Qwen/Qwen3-0.6B", "params": "0.6B", "note": "runs on a laptop (MPS or CPU)"},
         {"id": "Qwen/Qwen3-1.7B", "params": "1.7B", "note": "laptop with 16GB+"},

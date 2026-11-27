@@ -109,6 +109,7 @@ def run_loop(store: JobStore, job: dict[str, Any]) -> None:
     from transformers import AutoTokenizer
 
     from .gpu_train import completion_ids, grader_fn, settings, text_of
+    from .modal_backend import is_trace
 
     jid = job["job_id"]
     spec = spec_from_dict(job["spec"])
@@ -121,6 +122,9 @@ def run_loop(store: JobStore, job: dict[str, Any]) -> None:
     tok = AutoTokenizer.from_pretrained(job["tokenizer"])
     items = []
     for row in read_examples(spec.data):
+        if is_trace(row) or row.get("tools") or row["messages"][-1].get("tool_calls"):
+            raise ValueError(f"{spec.method} samples single-turn answers; agent traces and tool-calling "
+                             "examples train with sft")
         msgs = hf_messages(row["messages"])
         p, _ = completion_ids(tok, msgs[:-1], msgs[-1].get("content") or "")
         items.append({"p": p, "text": text_of(msgs[:-1]), "ref": msgs[-1].get("content") or ""})
@@ -186,7 +190,7 @@ def run_loop(store: JobStore, job: dict[str, Any]) -> None:
                         full, pl = x["p"] + c, len(x["p"]) - 1
                         datums.append(sdk.Datum(model_input=sdk.ModelInput.from_ints(full[:-1]), loss_fn_inputs={
                             "target_tokens": full[1:], "logprobs": [0.0] * pl + lp[:len(c)],
-                            "advantages": [0.0] * pl + [sc - mean] * len(c), "response_mask": [0] * pl + [1] * len(c)}))
+                            "advantages": [0.0] * pl + [sc - mean] * len(c)}))
                         usage["train"] += len(full)
                 reward = sum(rewards) / max(1, len(rewards))
                 loss = None
@@ -236,6 +240,10 @@ def run_loop(store: JobStore, job: dict[str, Any]) -> None:
                                  progress=round((rnd + (b + bs) / max(1, len(kept))) / rounds, 4),
                                  detail=f"round {rnd + 1}/{rounds} · {rate:.0%} correct · ~${cost()}")
             store.update(jid, rounds=history)
+            if not any(h["kept"] for h in history):
+                store.update(jid, cost_usd=cost())  # the sampling was paid for
+                raise RuntimeError("no sampled answer was correct in any round: the base model cannot solve these "
+                                   "prompts yet; train with sft first")
         saved = training.save_weights_for_sampler(snapshot_name(jid)).result()
         log(f"snapshot saved: {saved.path}")
         store.update(jid, state="succeeded", progress=1.0, checkpoint="fireworks-sampler://" + saved.path,

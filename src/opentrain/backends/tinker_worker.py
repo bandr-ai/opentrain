@@ -56,8 +56,14 @@ def _cookbook_datums(rows: list[dict[str, Any]], tokenizer: Any, spec, log) -> l
                 if m.get("tool_call_id") in names:
                     msg["name"] = names[m["tool_call_id"]]
             conv.append(msg)
-        out.append(conversation_to_datum(conv, renderer, max_length=spec.max_tokens,
-                                         train_on_what=renderers.TrainOnWhat.ALL_ASSISTANT_MESSAGES))
+        if getattr(renderer, "has_extension_property", True):
+            out.append(conversation_to_datum(conv, renderer, max_length=spec.max_tokens,
+                                             train_on_what=renderers.TrainOnWhat.ALL_ASSISTANT_MESSAGES))
+        else:  # the template writes old turns differently (drops their reasoning): one example per turn,
+            # each ending at the turn it trains, rendered as the model saw it when it produced that turn
+            out += [conversation_to_datum(conv[:i + 1], renderer, max_length=spec.max_tokens,
+                                          train_on_what=renderers.TrainOnWhat.LAST_ASSISTANT_MESSAGE)
+                    for i, m in enumerate(conv) if m["role"] == "assistant"]
     return out
 
 

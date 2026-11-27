@@ -312,11 +312,12 @@ def adapter_path(job_id: str) -> Path:
 
 
 def run(store: JobStore, job: dict[str, Any]) -> None:
-    from .modal_backend import _rows, prompt_completion
+    from .modal_backend import _rows, prompt_completion, sft_row
 
     jid = job["job_id"]
     spec = spec_from_dict(job["spec"])
-    rows = [prompt_completion(r) for r in _rows(spec.data)]
+    # sft keeps an agent trace whole (loss on every assistant turn); the sampling methods take prompts
+    rows = [sft_row(r) if spec.method == "sft" else prompt_completion(r) for r in _rows(spec.data)]
     gpus = job.get("gpu") or ["L40S"]
 
     def log(line: str) -> None:
