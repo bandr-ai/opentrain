@@ -164,7 +164,13 @@ def run(store: JobStore, job: dict[str, Any]) -> None:
     saved = training.save_weights_for_sampler(name=jid).result()
     cost = round(tokens_done * price / 1e6, 4)
     log(f"sampler weights saved: {saved.path}")
-    store.update(jid, state="succeeded", progress=1.0, checkpoint=saved.path, cost_usd=cost,
+    weights = None
+    try:  # the adapter as files you can take anywhere: tinker checkpoint download <path>, or push-hf
+        weights = training.save_weights_external(name=jid).result().path
+        log(f"downloadable weights saved: {weights} (tinker checkpoint download {weights})")
+    except Exception as exc:  # noqa: BLE001 - the model is trained and served either way
+        log(f"could not save downloadable weights ({type(exc).__name__}: {exc}); the model still serves on Tinker")
+    store.update(jid, state="succeeded", progress=1.0, checkpoint=saved.path, weights=weights, cost_usd=cost,
                  detail=f"done: {total} steps, {tokens_done} tokens, ~${cost} (estimate; Tinker billing "
                         "is authoritative)")
 

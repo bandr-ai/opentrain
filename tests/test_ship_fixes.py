@@ -118,3 +118,16 @@ def test_inkling_trains_through_tml_renderers():
 
     assert tml_model("thinkingmachines/Inkling-2-Mini:peft:65536:free")
     assert not tml_model("Qwen/Qwen3.5-4B")
+
+
+def test_shell_commands_train_from_the_repo_not_this_machine(monkeypatch):
+    from opentrain.traces import sft
+
+    monkeypatch.setattr(sft, "HOME", "/Users/me")
+    root = "/Users/me/code/app"
+    assert sft.relative_command(f"cd {root} && grep -rn foo src", root) == "grep -rn foo src"
+    assert sft.relative_command(f"cd '{root}'; pytest", root) == "pytest"
+    assert sft.relative_command(f"cat {root}/a.py; ls {root}", root) == "cat a.py; ls ."
+    assert sft.relative_command("ls /Users/me/code/other", root) == "ls ~/code/other"
+    assert sft.relative_command("grep -r /Users/me .", root) == "grep -r ~ ."
+    assert sft.relative_command("ls /Users/meg", root) == "ls /Users/meg"  # another user's folder
