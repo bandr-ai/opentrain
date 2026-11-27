@@ -18,6 +18,7 @@ MAX_UPLOAD = 30 * 1024 * 1024
 
 
 def _guard(fn, *a, **kw):
+    from ..artifacts import ArtifactError
     from ..core.complete import CompletionError
     from ..core.tool import ToolError
     from ..datasets import DatasetError
@@ -26,7 +27,7 @@ def _guard(fn, *a, **kw):
 
     try:
         return fn(*a, **kw)
-    except (DatasetError, GraderError, CompletionError, RegistryError, ToolError) as exc:
+    except (DatasetError, GraderError, CompletionError, RegistryError, ToolError, ArtifactError) as exc:
         raise ApiError(400, str(exc)) from None
 
 
@@ -356,3 +357,48 @@ async def traces_themes_route(request: web.Request):
 
     b = await body_of(request)
     return ok(await _run(coding.themes_choose, _trace_ctx(request), [str(n) for n in b.get("chosen") or []]))
+
+
+# ---------------------------------------------------------------------------- artifacts
+
+
+@routes.get("/api/artifacts")
+async def list_artifacts(request: web.Request):
+    from .. import artifacts
+
+    return ok(artifacts.list_all(project_of(request).state))
+
+
+@routes.get("/api/artifacts/{id}")
+async def get_artifact(request: web.Request):
+    from .. import artifacts
+
+    v = request.query.get("version")
+    return ok(await _run(artifacts.get, project_of(request).state, request.match_info["id"],
+                         int(v) if v and v.isdigit() else None))
+
+
+@routes.get("/api/artifacts/{id}/html")
+async def artifact_html(request: web.Request):
+    from .. import artifacts
+
+    a = await _run(artifacts.get, project_of(request).state, request.match_info["id"])
+    return web.Response(text=artifacts.to_html(a), content_type="text/html",
+                        headers={"Content-Disposition": f'inline; filename="{a["id"]}-v{a["version"]}.html"',
+                                 "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'"})
+
+
+@routes.post("/api/artifacts/{id}/decide")
+async def decide_artifact(request: web.Request):
+    from .. import artifacts
+
+    b = await body_of(request)
+    return ok(await _run(artifacts.decide, project_of(request).state, request.match_info["id"],
+                         str(b.get("option") or ""), str(b.get("note") or "")))
+
+
+@routes.post("/api/artifacts/data-card")
+async def make_data_card(request: web.Request):
+    from .. import artifacts
+
+    return ok(await _run(artifacts.data_card, project_of(request).state))

@@ -543,3 +543,29 @@ tr.g-open td { background: var(--sunken); }
 .traces-found, .traces-sum { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; }
 .traces-themes { display: grid; gap: 2px; margin-top: 6px; }
 .traces .theme { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+
+/* ------------------------------------------------------------------ artifacts */
+.artifacts h2 { font-size: 18px; }
+.art-list { display: grid; gap: 10px; }
+.art-row { display: block; padding: 14px 16px; color: inherit; text-decoration: none; }
+.art-row:hover { border-color: var(--line-strong); }
+.art-title { font-weight: 700; margin: 4px 0; }
+.art-ask { color: var(--bad); margin-top: 6px; font-weight: 600; }
+.artifact { max-width: 880px; }
+.art-h1 { font-size: 24px; margin: 6px 0 4px; }
+.art-h3 { font-size: 14px; margin: 22px 0 8px; }
+.art-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 16px 0; }
+.art-stat { padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.art-stat b { font-size: 22px; }
+.art-bar { display: grid; grid-template-columns: minmax(90px, 30%) 1fr 70px; gap: 10px; align-items: center; margin: 5px 0; font-size: 14px; }
+.art-track { height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; }
+.art-fill { height: 100%; background: var(--accent); }
+.art-table { overflow-x: auto; }
+.art-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.art-table td, .art-table th { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; }
+.art-table td.good { color: var(--good); } .art-table td.bad { color: var(--bad); }
+.art-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.art-pair pre { white-space: pre-wrap; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12.5px; margin: 4px 0; max-height: 360px; overflow: auto; }
+.art-decision { margin-top: 24px; }
+.art-text { margin: 12px 0; }
+@media (max-width: 640px) { .art-pair { grid-template-columns: 1fr; } .art-bar { grid-template-columns: 1fr 1fr 56px; } }

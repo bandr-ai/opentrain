@@ -6,6 +6,7 @@ import BoardPage, { DropZone } from "./pages/Board";
 import GridPage from "./pages/Grid";
 import { EvalDetail } from "./pages/Evals";
 import Jobs from "./pages/Jobs";
+import Artifacts from "./pages/Artifacts";
 import Settings from "./pages/Settings";
 
 // ------------------------------------------------------------------ routing (hash)
@@ -14,6 +15,7 @@ import Settings from "./pages/Settings";
 //   #/s/<stage>   one stage: goal data grade baseline train prove ship
 //   #/grid/<ds>   every held-out row against every model
 //   #/evals/<id>  one eval · #/jobs[/<id>] jobs · #/settings
+//   #/a[/<id>]    artifacts: the pages that lead each step (data card, eval comparison, ...)
 //   #/data/<ds>   the data stage on that dataset · #/chat/<sid> opens that conversation beside the board
 
 export type Route = { page: string; arg?: string };
@@ -210,6 +212,7 @@ export default function App() {
   else if (route.page === "models") main = <BoardPage stage="ship" />;
   else if (route.page === "jobs") main = <Jobs id={route.arg} />;
   else if (route.page === "settings") main = <Settings />;
+  else if (route.page === "a") main = <Artifacts id={route.arg} />;
 
   return (
     <Ctx.Provider value={state}>
@@ -222,6 +225,7 @@ export default function App() {
           {running.length > 0 && <a className="busy-t" href="#/jobs"><span className="dot busy" /> {running.length} running</a>}
           {waiting && <span className="err"><span className="dot waiting" /> needs you</span>}
           {b && <span className="budget" title={`${money(b.remaining_usd)} left of ${b.text}${b.reserved_usd ? `; ${money(b.reserved_usd)} held for running jobs until they report their real cost` : ""}`}>{money(b.spent_usd)} <span className="faint">spent</span>{b.reserved_usd ? <> <span className="faint">· {money(b.reserved_usd)} held</span></> : null}</span>}
+          <a className="toplink" href="#/a">artifacts</a>
           <a className="toplink" href="#/jobs">jobs</a>
           <a className="toplink" href="#/settings">settings</a>
           <span className={`conn ${connected ? "" : "off"}`} title={connected ? "connected" : "reconnecting…"}><i /></span>
