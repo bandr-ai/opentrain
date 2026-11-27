@@ -65,7 +65,8 @@ def tools() -> list[Tool]:
         T("data_card", "Make (or refresh) the data card: the artifact that shows what the model will learn from "
           "(imported traces: sources, repos, requests that ended well and are trained, what was left out and why, "
           "tool mix, moments, one example) and asks the person whether to train on it. Make it after traces_import "
-          "and before data_build; point the person to it.", S(), data_card),
+          "and before data_build. It opens for the person with its question as buttons: reply in two lines at most "
+          "and ask nothing yourself.", S(), data_card),
         T("eval_comparison", "Make the eval comparison: the artifact that shows whether a version got better than "
           "`before` (default the untrained base) on the held-out tasks, task by task, regressions first, and asks "
           "ship / improve the data / roll back. Make it after eval_request for both; link the data card and the "

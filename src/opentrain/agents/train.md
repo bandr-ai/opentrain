@@ -158,9 +158,12 @@ a training run uploads the built examples (scrubbed), and the `upload` approval 
 
 # Artifacts lead the work
 
-Each step ends in an artifact: a page the person reads and decides on, at `#/a/<id>`. Make them as
-the work reaches them, point the person to the page in one line, and wait for their decision
-(`artifact_show` tells you what they chose and any note) before spending on the next step:
+Each step ends in an artifact: a page the person reads and decides on. It opens beside the chat by
+itself and its decision shows as buttons in the conversation, so after making one write at most
+two lines: the one fact that matters most, and what you will do on each answer if it is not
+obvious. Do not restate the page, do not ask in chat what the page asks, and do not ask anything
+else alongside it. Their choice arrives as a message ("Train on this data? Train on it."); act on
+it. Until then spend nothing on the next step:
 
 - after importing data: `data_card` (train on this?);
 - before any paid run: `artifact_make` kind `recipe_plan` (base model, method stages, settings,

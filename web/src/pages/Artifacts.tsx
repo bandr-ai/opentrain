@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { ago, Empty, Markdown, toast, toastError } from "../ui";
-import { go } from "../App";
+import { go, useApp } from "../App";
 
 // Artifacts: the pages that lead the work. Each one shows evidence for one step and asks one decision.
 //   #/a           every artifact, newest first
@@ -27,6 +27,56 @@ const KIND: Record<string, string> = {
   run_page: "run", release: "release", cost_ledger: "cost ledger",
 };
 const kindLabel = (k: string) => KIND[k] || k.replace(/_/g, " ");
+
+/** The tools whose result is an artifact; the chat shows it as a card and opens it. */
+export const ARTIFACT_TOOLS = new Set(["data_card", "eval_comparison", "artifact_make"]);
+
+/** The artifact id in such a tool's result, if it finished. */
+export function artifactIdOf(tool: { name: string; state: string; output?: string }): string | null {
+  if (!ARTIFACT_TOOLS.has(tool.name) || tool.state !== "completed" || !tool.output) return null;
+  try { return JSON.parse(tool.output).id || null; } catch { return (tool.output.match(/"id":\s*"([^"]+)"/) || [])[1] || null; }
+}
+
+/** Record a decision and hand it to the agent's conversation, so the work goes on from there. */
+export async function decideArtifact(id: string, option: string, note: string, sid: string | null): Promise<Artifact> {
+  const a = await api.post<Artifact>(`/api/artifacts/${encodeURIComponent(id)}/decide`, { option, note });
+  if (sid) {
+    await api.post(`/api/session/${sid}/prompt`, {
+      text: `${a.decision?.question} ${option}.${note ? ` ${note}` : ""} (decided on ${a.title}, #/a/${a.id})`,
+    }).catch(() => toast("Decision saved; the agent will see it next time it looks."));
+  }
+  return a;
+}
+
+/** An artifact as a card in the conversation: what it is, its decision as buttons, a link to open it. */
+export function ArtifactInline({ id }: { id: string }) {
+  const { sid } = useApp();
+  const [a, setA] = useState<Artifact | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.get<Artifact>(`/api/artifacts/${encodeURIComponent(id)}`).then(setA).catch(() => {}); }, [id]);
+  if (!a) return null;
+  const d = a.decision;
+  const pick = async (o: string) => {
+    setBusy(true);
+    try { setA(await decideArtifact(a.id, o, "", sid)); } catch (e) { toastError(e); } finally { setBusy(false); }
+  };
+  return (
+    <div className="card card-pad art-inline">
+      <div className="faint small">{kindLabel(a.kind)} · v{a.version}</div>
+      <a className="art-title" href={`#/a/${encodeURIComponent(a.id)}`}>{a.title}</a>
+      {a.summary && <div className="small">{a.summary}</div>}
+      {d && (d.chosen ? <div className="small faint">Decided: {d.chosen}</div> : (
+        <div className="row" style={{ flexWrap: "wrap", marginTop: 8 }}>
+          <span className="small">{d.question}</span>
+          {d.options.map((o, i) => (
+            <button key={o} disabled={busy} className={`btn sm ${i === 0 ? "primary" : ""}`} onClick={() => pick(o)}>{o}</button>
+          ))}
+        </div>
+      ))}
+      <div style={{ marginTop: 6 }}><a className="small" href={`#/a/${encodeURIComponent(a.id)}`}>Open the full page →</a></div>
+    </div>
+  );
+}
 
 export default function Artifacts({ id }: { id?: string }) {
   return id ? <ArtifactView id={id} /> : <ArtifactList />;
@@ -77,6 +127,7 @@ function ArtifactList() {
 }
 
 function ArtifactView({ id }: { id: string }) {
+  const { sid } = useApp();
   const [a, setA] = useState<Artifact | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -89,8 +140,8 @@ function ArtifactView({ id }: { id: string }) {
 
   const decide = async (option: string) => {
     try {
-      setA(await api.post<Artifact>(`/api/artifacts/${encodeURIComponent(id)}/decide`, { option, note }));
-      toast(`Decided: ${option}. The agent sees it.`);
+      setA(await decideArtifact(id, option, note, sid));
+      toast(sid ? `Decided: ${option}. Sent to the agent.` : `Decided: ${option}.`);
     } catch (e) { toastError(e); }
   };
 
