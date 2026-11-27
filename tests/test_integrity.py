@@ -88,7 +88,9 @@ def test_the_shell_cannot_read_heldout_even_indirectly(live):
     c.post(f"/api/session/{s['id']}/prompt", {"text": "go"})
     c.post(f"/api/session/{s['id']}/wait", {"timeout": 30})
     t = [p["tool"] for m in c.get(f"/api/session/{s['id']}/message") for p in m["parts"] if p["type"] == "tool"][0]
-    assert "billing service" not in t["output"] and ("not permitted" in t["output"] or "Permission" in t["output"])
+    # macOS's sandbox refuses the read; Linux's bwrap leaves the folder out of the shell's view entirely
+    walled = ("not permitted", "Permission", "No such file or directory")
+    assert "billing service" not in t["output"] and any(w in t["output"] for w in walled), t["output"][-400:]
 
 
 def test_the_evaluator_process_reports_refusals(tmp_path):

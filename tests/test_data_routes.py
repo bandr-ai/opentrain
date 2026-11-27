@@ -168,6 +168,7 @@ def test_a_job_an_outside_agent_starts_wakes_no_model(live):
     c = live.client(live.proj)
     content = "".join(json.dumps({"question": f"q{i}", "answer": "done"}) + "\n" for i in range(30))
     c.post("/api/dataset/ow/upload", {"filename": "ow.jsonl", "content": content})
+    c.patch("/api/dataset/ow", {"grader": {"type": "exact"}})  # no model judge: the test must not need Claude Code
     ScriptedProvider.register("ow-good", [])
     r = c.post("/api/outside/call", {"name": "dataset_eval", "input": {"name": "ow", "model": "scripted/ow-good"}})
     assert "job_wait" in r["output"] and "system reminder" not in r["output"]
