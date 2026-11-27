@@ -19,12 +19,17 @@ uploaded). Report: how many traces changed code, in which repos, how many traini
 many moments where something went wrong. If almost nothing changed code, say so plainly: this
 machine has little coding history, and the repos' commit history (step 3) carries the work.
 
-## 2. Ask what to fix (skill data/diagnose)
+## 2. What went wrong, as evidence (skill data/diagnose)
 
-Read `moments` in batches and name the recurring themes in their words. `themes_set`, then one
-`question` with the themes as options (multi-select) plus "just do my routine work, cheaper".
-`themes_choose` records the answer. Chosen themes decide which traces matter most and which
-held-out tasks the report breaks out.
+The goal is their routine work, cheaper; do not ask them to pick what to fix from a menu. Read
+`moments` in batches, name the recurring themes in their words and sort each one: **trainable**
+(how the model does the work: does more than asked, wrong approach in their stack, long or vague
+reports) or **a rule, not training** (commit trailers, spending without asking, a setting, the
+environment: say the one-line rule or setting that fixes it; OpenTrain's approvals already gate
+spending). `themes_set`, then `data_card`: the themes show there with their evidence.
+Ask nothing unless a trainable theme is seen in 5+ sessions you read as real; then one yes/no
+with your recommendation ("Also train against <theme>, seen in 8 sessions? I'd say yes").
+`themes_choose` records a yes.
 
 ## 3. Tasks, and what checks them (skills cl/mine, data/history)
 
@@ -40,6 +45,8 @@ the change with the real one, after the checks the work must not break (a build,
   tasks a pass-rate difference of one or two tasks is noise; mine more before claiming anything.
 
 ## 4. Pick the student (`students`)
+
+Offer only models `students` lists, by their exact ids; never a size or family it does not list.
 
 Offer the tiers in one `question`, cheapest first, with the reason for each:
 - small: Inkling 2 Mini on Tinker (strongest coding per active parameter; Tinker key needed; a free

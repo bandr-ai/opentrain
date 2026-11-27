@@ -88,3 +88,26 @@ def test_the_agent_has_the_artifact_tools():
 
     names = {t.name for t in artifacts.tools()}
     assert names == {"data_card", "eval_comparison", "artifact_make", "artifacts", "artifact_show"}
+
+
+def test_the_data_card_sorts_themes_into_training_and_rules(tmp_path):
+    _traces(tmp_path)
+    (tmp_path / "traces" / "themes.json").write_text(json.dumps([
+        {"name": "does more than asked", "count": 7, "trainable": True, "fix": "corrected continuations",
+         "evidence": ["t1:0"]},
+        {"name": "adds a co-author trailer", "count": 3, "trainable": False, "fix": "a commit rule"}]))
+    t = next(b for b in A.data_card(tmp_path)["blocks"] if b.get("title", "").startswith("What went wrong"))
+    assert [r[2] for r in t["rows"]] == ["yes", "no: a rule"]
+
+
+def test_themes_keep_their_classification_and_count_sessions_not_moments(tmp_path):
+    import types
+
+    from opentrain.core.tools import coding
+
+    ctx = types.SimpleNamespace(project=types.SimpleNamespace(state=tmp_path))
+    coding.themes_set(ctx, [{"name": "trailer", "trainable": False, "evidence": ["t1:0", "t1:2", "t1:5"]},
+                            {"name": "scope", "evidence": ["t1:0", "t2:1"]}])
+    saved = {t["name"]: t for t in json.loads((tmp_path / "traces" / "themes.json").read_text())}
+    assert saved["trailer"]["trainable"] is False and saved["trailer"]["sessions"] == 1
+    assert saved["scope"]["trainable"] is True and saved["scope"]["sessions"] == 2

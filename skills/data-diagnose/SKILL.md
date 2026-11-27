@@ -1,6 +1,6 @@
 ---
 name: data/diagnose
-description: Name what goes wrong in the person's coding-agent traces, in their words, so they can choose what the model should get better at. A looped prompt over the moments the import flagged.
+description: Name what goes wrong in the person's coding-agent traces, in their words, and sort what training can fix from what a rule fixes. A looped prompt over the moments the import flagged.
 ---
 
 # data/diagnose
@@ -22,13 +22,23 @@ a few themes the person recognises.
    changes nothing, or after about 200 moments.
 4. Keep themes that recur (3+ moments you read as real, or 2 with an explicit correction). Leave out one-offs and
    moments about the environment (network down, missing credentials): no training fixes those.
-5. `themes_set`: for each, name, one-sentence description, count, evidence (`trace:request` ids)
-   and the fix (what data teaches it: the corrected continuation as the target, repair tasks from
-   the failing checks, held-out tasks from the same repo).
-6. One `question`, multi-select: the themes (with counts) plus "none: just do my routine work,
-   cheaper". `themes_choose` with the answer.
+   A keyword "pushback" is often just how the person talks (casual swearing, "nah" to a question):
+   judge it against their usual tone and count only real disagreement.
+5. Sort each theme. **Trainable**: how the model does the work (scope beyond the request, the
+   wrong approach for their stack, long or vague final reports, not running the checks). **A
+   rule**: anything a setting or one instruction fixes for good (commit trailers, spending without
+   asking, which branch to push to): training a model to remember a rule is slower and less sure
+   than the rule; name the rule instead.
+6. `themes_set`: for each, name, one-sentence description, count (moments you read as real),
+   evidence (`trace:request` ids; the sessions count is the distinct traces in it), `trainable` (true/false) and the fix: for a trainable one, what
+   data teaches it (the corrected continuation as the target, repair tasks from the failing
+   checks, held-out tasks from the same repo); for a rule, the rule.
+7. Do not ask the person to pick from the themes. `data_card` shows them as evidence. Only a
+   trainable theme seen in 5+ sessions earns one yes/no question, with your recommendation;
+   `themes_choose` records a yes. The default goal stays their routine work, cheaper.
 
 ## Honesty
 
-Counts are of moments, not of distinct failures; say "seen in 7 sessions", not "fails 7 times".
+Sessions are distinct traces in the evidence; five moments in one session is one session. Say "seen in 7
+sessions", not "fails 7 times".
 A theme fixed is one whose held-out tasks now pass; say how many there are.
