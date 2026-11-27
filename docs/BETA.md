@@ -16,6 +16,16 @@ send feedback.
   - or RunPod: `opentrain login runpod`.
 - For coding: repos with tests that run on your machine. The tests decide every task.
 
+## First look (one command, nothing to install)
+
+```bash
+uvx opentrain-cli traces
+```
+
+One card: every coding agent's logs on your machine, how many sessions changed code and in how many
+repos, how many could become training examples, and where your agents went wrong (you corrected
+them, stopped them, checks kept failing). Read on your machine; nothing is saved or uploaded.
+
 ## Install
 
 ```bash
@@ -26,8 +36,7 @@ uv tool install "opentrain-cli[modal]"      # add ,tinker for Tinker
 
 ```bash
 cd a-repo-you-work-in
-opentrain traces              # what your coding agents left on this machine
-opentrain traces --import     # read them here; credentials are scrubbed; nothing is uploaded
+opentrain traces --import     # keep that in this project; credentials scrubbed; nothing uploaded
 opentrain web                 # opens the app
 ```
 

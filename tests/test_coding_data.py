@@ -279,3 +279,13 @@ def test_the_report_holds_counts_not_names(tmp_path, monkeypatch):
     assert "acme" not in text
     assert '"changed_code": 1' in text and '"chosen": 1' in text
     assert "acme billing" in report.render(report.collect(tmp_path, names=True))
+
+
+def test_a_card_lines_up_in_unicode_and_in_ascii():
+    from opentrain.card import Row, Section, render
+
+    for fancy in (True, False):
+        out = render("t", ["sub"], [Section("a", [Row("x", "1", 0.5), Row("y", "2")]), Section("b", [Row("z", "3")])],
+                     ["next: do it"], fancy=fancy)
+        widths = {len(line) for line in out.splitlines()}
+        assert widths == {72}, out

@@ -35,5 +35,5 @@ print(f"wheel smoke test passed: opentrain {opentrain.__version__}, {len(skills)
 PY
 
 "$work/venv/bin/opentrain" --version
-"$work/venv/bin/opentrain" traces | grep -q "No coding-agent logs found"
+"$work/venv/bin/opentrain-cli" traces | grep -q "No coding-agent logs found"
 echo "wheel smoke test passed: opentrain traces"

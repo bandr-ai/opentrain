@@ -9,7 +9,8 @@ loop, and anything that costs money, sends data out, trains or changes what is l
 one proposed step, with its price, to approve, change or skip.
 
 ```
-$ opentrain web        # the web app (or: opentrain, for the terminal app)
+$ uvx opentrain-cli traces   # what your coding agents left on this machine, and where they went wrong
+$ opentrain web              # the web app (or: opentrain, for the terminal app)
 ```
 
 - **A small model that does your coding.** OpenTrain finds every coding agent's logs on your machine

@@ -39,6 +39,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.9"]
 [project.scripts]
 opentrain = "opentrain.cli:main"
 ot = "opentrain.cli:main"
+opentrain-cli = "opentrain.cli:main"  # so `uvx opentrain-cli traces` works with nothing installed
 
 [project.urls]
 Homepage = "https://github.com/bandr-ai/opentrain"

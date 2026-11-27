@@ -68,17 +68,16 @@ def traces_scan(ctx) -> Any:
             if found else "No coding-agent logs found on this machine."}
 
 
-def import_traces(state: Path, sources: list[str] | None = None, since: str | None = None,
+def import_traces(state: Path | None, sources: list[str] | None = None, since: str | None = None,
                   progress=lambda frac, text: None, check=lambda: None) -> dict[str, Any]:
-    """Read every agent's logs on this machine into ``<state>/traces`` (scrubbed); the import summary."""
+    """Read every agent's logs on this machine into ``<state>/traces`` (scrubbed); the import summary.
+    With ``state=None`` nothing is written: the summary alone (``opentrain traces`` before an import)."""
     from ...traces import EDIT_KINDS
     from ...traces.readers import read_all
     from ...traces.scrub import scrub_trace
     from ...traces.sft import examples, work_root
     from ...traces.signals import moments
 
-    d = state / "traces"
-    d.mkdir(parents=True, exist_ok=True)
     progress(None, "reading every agent's logs on this machine")
     traces, unreadable = read_all(sources, since=since)
     index, exs, skipped, moms = [], [], Counter(), []
@@ -100,9 +99,12 @@ def import_traces(state: Path, sources: list[str] | None = None, since: str | No
                       "requests": len(t.prompts), "edits": sum(1 for u in t.tool_uses() if u.kind in EDIT_KINDS),
                       "files_edited": len(t.edited_files), "examples": len(good),
                       "moments": dict(Counter(m["kind"] for m in ms)), "models": t.models[:3]})
-    _write_jsonl(d / "index.jsonl", index)
-    _write_jsonl(d / "examples.jsonl", exs)
-    _write_jsonl(d / "moments.jsonl", moms)
+    if state is not None:
+        d = state / "traces"
+        d.mkdir(parents=True, exist_ok=True)
+        _write_jsonl(d / "index.jsonl", index)
+        _write_jsonl(d / "examples.jsonl", exs)
+        _write_jsonl(d / "moments.jsonl", moms)
     coding = [r for r in index if r["edits"]]
     return {"traces": len(index), "unreadable": len(unreadable),
             "by_agent": dict(Counter(r["agent"] for r in index)),

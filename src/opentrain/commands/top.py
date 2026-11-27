@@ -505,36 +505,56 @@ def cmd_report(a) -> int:
     return 0
 
 
+MOMENT_LABELS = {"corrected": "you corrected it", "interrupted": "you stopped it",
+                 "failing_check": "a check kept failing", "churn": "same file, again", "tool_errors": "tool errors"}
+
+
 def cmd_traces(a) -> int:
-    """Like Paxel: find every coding agent's logs, say what is there, and (with --import) index them."""
+    """Like Paxel and hf-mem: one command, one card. What every coding agent left on this machine,
+    what of it can become training, and where the agents went wrong. Read here; with --import it is
+    also kept in the project for the agent to use."""
+    from ..card import Row, Section, render
+    from ..core.tools.coding import import_traces
     from ..traces.readers import scan
 
     rows = scan()
     found = [r for r in rows if r.get("count")]
     if not found:
-        print("No coding-agent logs found on this machine.")
+        print("No coding-agent logs found on this machine "
+              "(looked for Claude Code, Codex, Cursor, opencode, Gemini CLI, Cline, aider, pi, Copilot).")
         return 0
-    print("Coding-agent logs on this machine\n")
-    for r in rows:
-        where = ", ".join(str(x) for x in (r.get("roots") or [])[:1])
-        print(f"  {r['label']:<16} {r.get('count', 0):>6}   {where if r.get('count') else ''}")
-    if not a.do_import:
-        print("\nopentrain traces --import   reads them here (nothing is uploaded) and shows what can be trained on")
-        return 0
-    from ..core.tools.coding import import_traces
-
-    state = Path(a.dir).resolve() / ".opentrain"
-    print(f"\nImporting into {state} ...", flush=True)
-    r = import_traces(state, since=a.since, progress=lambda f, t: print(f"  {t}", flush=True) if f is None else None)
-    print(f"\n  {r['traces']} traces read ({r['unreadable']} unreadable)")
-    for agent, n in r["by_agent"].items():
-        print(f"    {agent:<14} {n:>6}   {r['coding_by_agent'].get(agent, 0)} changed code")
-    print(f"  {r['coding_traces']} changed code, in {r['repos']} repos")
-    print(f"  {r['examples']} training examples in the trained model's tools")
+    state = Path(a.dir).resolve() / ".opentrain" if a.do_import else None
+    if sys.stderr.isatty():
+        print("reading your coding-agent logs here (nothing leaves this machine)...", file=sys.stderr, flush=True)
+    r = import_traces(state, since=a.since)
+    top = max(x["count"] for x in found)
+    agents = Section("found", [Row(x["label"], f"{x['count']:,} log{'s' if x['count'] != 1 else ''} · "
+                                                f"{r['coding_by_agent'].get(_reader(x), 0)} changed code", x["count"] / top) for x in found])
+    trainable = Section("can become training", [
+        Row("changed code", f"{r['coding_traces']} sessions in {r['repos']} repos"),
+        Row("examples", f"{r['examples']} requests, in a small model's tools"),
+    ])
+    sections = [agents, trainable]
     if r["moments"]:
-        print("  where something went wrong: " + ", ".join(f"{n} {k}" for k, n in r["moments"].items()))
-    print("\nNext: opentrain web, and ask for a small model that does your coding.")
+        worst = max(r["moments"].values())
+        sections.append(Section("where your agents went wrong", [
+            Row(MOMENT_LABELS.get(k, k), f"{n} times", n / worst)
+            for k, n in sorted(r["moments"].items(), key=lambda kv: -kv[1])]))
+    footer = ([f"kept in {state}", "next: opentrain web  ->  'a small model that does my coding'"] if state else
+              ["next: opentrain traces --import   (keep it in this project)",
+               "then: opentrain web  ->  'a small model that does my coding'"])
+    if r["coding_traces"] < 10:
+        footer.insert(0, "few sessions changed code: your repos' commit history will supply most tasks")
+    from .. import __version__
+
+    print(render(f"opentrain {__version__}  ·  your coding agents",
+                 [f"{r['traces']:,} logs read here · credentials scrubbed · nothing uploaded"],
+                 sections, footer))
     return 0
+
+
+def _reader(source: dict) -> str:
+    return source.get("name", "")
 
 
 def main(argv: list[str] | None = None) -> int:
