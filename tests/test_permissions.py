@@ -189,3 +189,41 @@ def test_an_unattended_free_step_goes_ahead(live):
                   metadata={"unattended": True})
     t = _tools(c, s["id"])[0]
     assert t["state"] == "completed" and "Approved" in t["output"]
+
+
+def _proposals(c, n=1):
+    for _ in range(100):
+        p = c.get("/api/proposal")
+        if len(p) >= n:
+            return p
+        time.sleep(0.05)
+    raise AssertionError("no proposal appeared")
+
+
+def test_a_message_while_a_step_waits_is_answered_not_queued(live):
+    """Typing instead of clicking Approve: the wait ends with the message, and the agent answers it in
+    the same turn; the message shows in the conversation once, and the step is not approved."""
+    c, s = _start(live, "w1", [[{"tool": "propose", "input": {"title": "Evaluate the base", "needs": ["spend"],
+                                                               "cost_usd": 0.15}}], ["Because 5 tasks is too few."]])
+    _proposals(c)
+    c.post(f"/api/session/{s['id']}/prompt", {"text": "why only 5 held-out tasks?"})
+    t = _tools(c, s["id"])[0]
+    assert t["state"] == "completed" and "Not approved yet" in t["output"] and "why only 5" in t["output"]
+    msgs = c.get(f"/api/session/{s['id']}/message")
+    users = [p["text"] for m in msgs if m["role"] == "user" for p in m["parts"]]
+    assert users.count("why only 5 held-out tasks?") == 1
+    assert any("too few" in p.get("text", "") for p in msgs[-1]["parts"])
+    assert c.get("/api/proposal") == []
+
+
+def test_a_message_while_a_question_waits_is_the_answer(live):
+    c, s = _start(live, "w2", [[{"tool": "question", "input": {"questions": [
+        {"question": "Which student?", "options": ["4B", "9B"]}]}}], ["ok"]])
+    for _ in range(100):
+        if c.get("/api/question"):
+            break
+        time.sleep(0.05)
+    c.post(f"/api/session/{s['id']}/prompt", {"text": "what does each cost?"})
+    t = _tools(c, s["id"])[0]
+    assert t["state"] == "error" and "what does each cost?" in t["error"]
+    assert c.get("/api/question") == []

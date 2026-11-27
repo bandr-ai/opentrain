@@ -111,8 +111,40 @@ class Runner:
             self._first_run()
         item = self.store.create("inbox", {"session_id": sid, "text": text, "delivery": delivery, "status": "pending",
                                            "synthetic": synthetic, "files": files or [], "time": {"created": _now()}})
+        if not synthetic and delivery == "steer" and self._waiting_on_person(sid):
+            # The turn is blocked on a proposal, question or permission, so a steering message would
+            # sit in the inbox until someone clicks. The message is the answer: show it now and hand
+            # it to what is waiting, so the agent replies to it in this turn.
+            self._deliver([item], answered=True)
+            self._call_on_loop(self._answer_waiting, sid, text)
+            return self.store.get("inbox", item["id"]) or item
         self.wake(sid)
         return item
+
+    def _waiting_on_person(self, sid: str) -> bool:
+        s = self.project.services
+        return any(svc is not None and svc.pending(sid) for svc in
+                   (s.get("proposals"), s.get("questions"), s.get("permissions")))
+
+    def _answer_waiting(self, sid: str, text: str) -> None:
+        s = self.project.services
+        for p in s["proposals"].pending(sid) if s.get("proposals") else []:
+            s["proposals"].answer_with_message(p["id"], text)
+        for q in s["questions"].pending(sid) if s.get("questions") else []:
+            s["questions"].answer_with_message(q["id"], text)
+        for r in s["permissions"].pending(sid) if s.get("permissions") else []:
+            s["permissions"].reply(r["id"], "reject", f"instead of answering, they wrote: {text}")
+
+    def _call_on_loop(self, fn, *args) -> None:
+        loop = self.loop or asyncio.get_event_loop()
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            fn(*args)
+        else:
+            loop.call_soon_threadsafe(fn, *args)
 
     def _first_run(self) -> None:
         """The first prompt in a project writes the default Trainfile, so the policy is visible and
@@ -180,11 +212,14 @@ class Runner:
         items = [i for i in self.store.find("inbox", session_id=sid) if i["status"] == "pending"]
         return [i for i in items if delivery is None or i["delivery"] == delivery]
 
-    def _deliver(self, items: list[dict[str, Any]]) -> None:
+    def _deliver(self, items: list[dict[str, Any]], answered: bool = False) -> None:
+        """Items become messages. ``answered``: the message already reached the agent as the answer to
+        what it was waiting on (an agent provider must not get it again as a new prompt)."""
         for it in items:
             role = "synthetic" if it.get("synthetic") else "user"
             msg = self.store.create("message", {"session_id": it["session_id"], "role": role,
-                                                "time": {"created": _now()}, "inbox_id": it["id"]})
+                                                "time": {"created": _now()}, "inbox_id": it["id"],
+                                                **({"answered_in_turn": True} if answered else {})})
             self.store.create("part", {"session_id": it["session_id"], "message_id": msg["id"], "type": "text",
                                        "text": it["text"], "time": {"created": _now()}})
             self.store.update("inbox", it["id"], {"status": "delivered", "message_id": msg["id"]})

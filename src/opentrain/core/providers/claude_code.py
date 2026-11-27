@@ -61,7 +61,7 @@ class ClaudeCodeProvider:
     def _prompt(self, runner: "Runner", sid: str, seen: set[str]) -> tuple[str, list[str]]:
         parts, ids = [], []
         for m in runner.project.messages(sid):
-            if m["role"] in ("user", "synthetic") and m["id"] not in seen:
+            if m["role"] in ("user", "synthetic") and m["id"] not in seen and not m.get("answered_in_turn"):
                 text = "\n".join(p.get("text", "") for p in m["parts"] if p["type"] == "text")
                 parts.append(f"<system-reminder>\n{text}\n</system-reminder>" if m["role"] == "synthetic" else text)
                 ids.append(m["id"])
