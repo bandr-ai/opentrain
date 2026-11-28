@@ -23,7 +23,6 @@ their content or a model's answer to them.
 from __future__ import annotations
 
 import functools
-import html
 import json
 import re
 import threading
@@ -39,10 +38,15 @@ BLOCKS = {
     "text": ("text",),
     "stats": ("items",),
     "bars": ("items",),
+    "chart": ("series",),
     "table": ("columns", "rows"),
     "samples": ("items",),
     "list": ("items",),
+    "callout": ("text",),
+    "html": ("html",),
 }
+LISTS = {"stats": "items", "bars": "items", "table": "rows", "samples": "items", "list": "items", "chart": "series"}
+MAX_HTML = 200_000
 BUILTIN = ("data_card", "eval_comparison")
 MAX_BYTES = 2_000_000
 
@@ -80,8 +84,23 @@ def check_blocks(blocks: Any) -> list[dict[str, Any]]:
         missing = [k for k in BLOCKS[b["type"]] if k not in b]
         if missing:
             raise ArtifactError(f"block {i} ({b['type']}): needs {', '.join(missing)}")
-        if b["type"] != "text" and not isinstance(b.get("items", b.get("rows")), list):
-            raise ArtifactError(f"block {i} ({b['type']}): items/rows must be a list")
+        key = LISTS.get(b["type"])
+        if key and not isinstance(b.get(key), list):
+            raise ArtifactError(f"block {i} ({b['type']}): {key} must be a list")
+        if b["type"] == "chart":
+            if b.get("kind", "line") not in ("line", "bar"):
+                raise ArtifactError(f"block {i} (chart): kind is line or bar")
+            for s in b["series"]:
+                pts = s.get("points") if isinstance(s, dict) else None
+                if not isinstance(pts, list) or not pts or not all(isinstance(p, list) and len(p) == 2 for p in pts):
+                    raise ArtifactError(f"block {i} (chart): each series needs points: [[x, y], ...]")
+        if b["type"] == "html":
+            if not isinstance(b["html"], str) or len(b["html"]) > MAX_HTML:
+                raise ArtifactError(f"block {i} (html): a string of static HTML and CSS, at most 200 KB")
+            from .artifact_page import clean_html
+            b["html"] = clean_html(b["html"])
+        if b["type"] == "callout" and b.get("tone", "info") not in ("good", "warn", "bad", "info"):
+            raise ArtifactError(f"block {i} (callout): tone is good, warn, bad or info")
     return blocks
 
 
@@ -248,7 +267,8 @@ def data_card(state: Path, *, id: str = "data-card") -> dict[str, Any]:
     tool_names = Counter(c["function"]["name"] for e in examples for m in e.get("messages", [])
                          if m.get("tool_calls") for c in m["tool_calls"])
     by_agent = Counter(r["agent"] for r in index)
-    by_repo = Counter(r.get("repo") or "(no repo)" for r in coding)
+    # one row per repo by name: several checkouts or worktrees of one repo are the same repo
+    by_repo = Counter(Path(r["repo"]).name if r.get("repo") else "(no repo)" for r in coding)
     why = Counter(k for o in ends for k, bad in (("pushback after", o.get("pushback")),
                                                  ("stopped", o.get("interrupted")),
                                                  ("check failing at the end", o.get("checks") is False)) if bad)
@@ -259,12 +279,17 @@ def data_card(state: Path, *, id: str = "data-card") -> dict[str, Any]:
         {"type": "stats", "items": [
             {"label": "work sessions", "value": len(index), "note": f"from {len(by_agent)} agent(s)"},
             {"label": "changed code", "value": len(coding), "note": f"in {len([r for r in by_repo if r != '(no repo)'])} repos"},
-            {"label": "requests to train on", "value": well, "note": f"of {len(examples)}: the ones that ended well"},
+            {"label": "requests to train on", "value": well, "tone": "good",
+             "note": f"of {len(examples)}: the ones that ended well"},
             {"label": "tokens per request", "value": f"{pct(0.5):,}", "note": f"median; 90% under {pct(0.9):,}"}]},
+        *([{"type": "callout", "tone": "warn", "title": f"{by_repo['(no repo)']} of {len(coding)} sessions that "
+                                                         "changed code have no repo",
+            "text": "Their changes cannot be checked against a commit, so they can teach the model but cannot "
+                    "become test tasks."}] if by_repo.get("(no repo)", 0) * 3 >= max(len(coding), 1) else []),
         {"type": "bars", "title": "Where the sessions came from",
          "items": [{"label": AGENTS.get(a, a), "value": n, "max": top} for a, n in by_agent.most_common()]},
         {"type": "bars", "title": "Repos with code changes (sessions)",
-         "items": [{"label": Path(r).name if r != "(no repo)" else r, "value": n, "max": max(by_repo.values())}
+         "items": [{"label": r, "value": n, "max": max(by_repo.values())}
                    for r, n in by_repo.most_common(12)]},
         {"type": "bars", "title": "Requests left out, and why",
          "items": [{"label": k, "value": n, "max": max(len(examples), 1)} for k, n in why.most_common()]
@@ -287,12 +312,11 @@ def data_card(state: Path, *, id: str = "data-card") -> dict[str, Any]:
         pass
     if themes:
         blocks.append({"type": "table", "title": "What went wrong, read from the moments",
-                       "columns": ["theme", "sessions", "training fixes it?", "the fix", "evidence"],
+                       "columns": ["theme", "sessions", "training fixes it?", "the fix", "moments cited"],
                        "rows": [[t.get("name", ""), t.get("sessions", t.get("count", "")),
                                  "yes" + (" (chosen)" if t.get("chosen") else "") if t.get("trainable", True)
                                  else "no: a rule", str(t.get("fix", ""))[:200],
-                                 ", ".join(map(str, (t.get("evidence") or [])[:6]))
-                                 + (" ..." if len(t.get("evidence") or []) > 6 else "")] for t in themes]})
+                                 len(t.get("evidence") or [])] for t in themes]})
     sample = next((e for e in examples if ((e.get("meta") or {}).get("outcome") or {}).get("ended_well", True)), None)
     if sample:
         msgs = sample["messages"]
@@ -353,15 +377,23 @@ def eval_comparison(state: Path, *, before: str = "base", after: str, id: str | 
             {"label": after, "value": f"{pb}/{len(both)}", "note": f"{pb / n:.0%} of held-out tasks"},
             {"label": "fixed", "value": len(fixed), "note": "failed before, pass now"},
             {"label": "regressed", "value": len(broke), "note": "passed before, fail now"}]},
-        {"type": "bars", "title": "Held-out pass rate",
-         "items": [{"label": before, "value": round(pa / n * 100), "max": 100, "note": "%"},
-                   {"label": after, "value": round(pb / n * 100), "max": 100, "note": "%"}]},
+        {"type": "chart", "kind": "bar", "title": "Held-out pass rate", "unit": "%", "max": 100,
+         "series": [{"name": "pass rate", "points": [[before, round(pa / n * 100)], [after, round(pb / n * 100)]]}]},
         {"type": "table", "columns": ["task", before, after, f"{before} time", f"{after} time"],
          "rows": [[t, mark(a, t), mark(b, t), secs(a, t), secs(b, t)] for t in order[:200]]},
         {"type": "text", "text": "Regressions are listed first. The held-out tasks stay sealed: their content and the "
                                  "models' answers never reach the agent that writes training data, so these scores "
                                  "cannot be trained on. Only pass, fail and time leave the evaluator."},
     ]
+    tone = {"better": "good", "worse": "bad"}.get(verdict, "warn")
+    say = {"better": f"{after} passes {len(fixed)} more held-out task(s) and breaks none.",
+           "worse": f"{after} passes fewer held-out tasks than {before}.",
+           "mixed": f"{after} fixes {len(fixed)} task(s) but breaks {len(broke)}.",
+           "the same": f"{after} passes the same held-out tasks as {before}."}[verdict]
+    if len(both) < 10:
+        say += (f"\n\nWith {len(both)} held-out tasks, one task is {100 / n:.0f} points: a difference of one or two "
+                "tasks can be chance.")
+    blocks.insert(0, {"type": "callout", "tone": tone, "title": f"{after} is {verdict}", "text": say})
     if len(both) < len(tasks):
         blocks.insert(2, {"type": "text", "text": f"{len(tasks) - len(both)} task(s) were scored for only one of the "
                                                   "two and are not counted."})
@@ -381,72 +413,8 @@ def _slug(s: str) -> str:
 # ---------------------------------------------------------------------------- a page to share
 
 
-CSS = """:root{--bg:#fbfaf8;--fg:#1d1c1a;--mute:#6b6862;--line:#e6e2db;--bar:#c96442;--card:#fff;--good:#2f7d4f;--bad:#b4443a}
-@media (prefers-color-scheme:dark){:root{--bg:#1c1b19;--fg:#ecebe8;--mute:#a19e97;--line:#36342f;--bar:#e07a55;--card:#24231f}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-sans-serif,system-ui,sans-serif}
-main{max-width:880px;margin:0 auto;padding:32px 16px 64px}h1{font-size:26px;margin:0 0 6px}h2{font-size:15px;margin:28px 0 10px}
-.meta,.note{color:var(--mute);font-size:13px}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:18px 0}
-.stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}.stat b{display:block;font-size:24px}
-.bar{display:grid;grid-template-columns:minmax(90px,30%) 1fr 64px;gap:10px;align-items:center;margin:5px 0;font-size:14px}
-.track{height:10px;background:var(--line);border-radius:5px;overflow:hidden}.fill{height:100%;background:var(--bar)}
-table{width:100%;border-collapse:collapse;font-size:13px}td,th{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left}
-.pass{color:var(--good)}.fail{color:var(--bad)}.pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-@media (max-width:640px){.pair{grid-template-columns:1fr}}pre{white-space:pre-wrap;background:var(--card);border:1px solid var(--line);
-border-radius:8px;padding:10px;font-size:12.5px;margin:4px 0}code{font-size:.92em}.decision{margin-top:28px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--card)}"""
+def to_html(art: dict[str, Any], *, embed: bool = False, theme: str | None = None) -> str:
+    """The artifact as one self-contained page (no scripts, no outside files): shown in the app and shared."""
+    from .artifact_page import page
 
-
-def _inline(text: str) -> str:
-    t = html.escape(str(text))
-    t = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
-    return re.sub(r"`([^`]+)`", r"<code>\1</code>", t)
-
-
-def _block_html(b: dict[str, Any]) -> str:
-    t = b["type"]
-    head = f"<h2>{html.escape(str(b['title']))}</h2>" if b.get("title") else ""
-    if t == "text":
-        return "".join(f"<p>{_inline(p)}</p>" for p in str(b["text"]).split("\n\n"))
-    if t == "stats":
-        return '<div class="stats">' + "".join(
-            f'<div class="stat"><span class="note">{html.escape(str(i.get("label", "")))}</span>'
-            f'<b>{html.escape(str(i.get("value", "")))}</b><span class="note">{html.escape(str(i.get("note", "")))}</span></div>'
-            for i in b["items"]) + "</div>"
-    if t == "bars":
-        rows = []
-        for i in b["items"]:
-            v, m = float(i.get("value") or 0), float(i.get("max") or 0) or max(float(x.get("value") or 0) for x in b["items"]) or 1
-            rows.append(f'<div class="bar"><span>{html.escape(str(i.get("label", "")))}</span><div class="track">'
-                        f'<div class="fill" style="width:{min(100, v / m * 100):.1f}%"></div></div>'
-                        f'<span class="note">{html.escape(str(i.get("value", "")))}{html.escape(str(i.get("note", "")))}</span></div>')
-        return head + "".join(rows)
-    if t == "table":
-        cell = lambda c: f'<td class="{c}">{html.escape(str(c))}</td>' if c in ("pass", "fail") else f"<td>{html.escape(str(c))}</td>"  # noqa: E731
-        return head + "<table><tr>" + "".join(f"<th>{html.escape(str(c))}</th>" for c in b["columns"]) + "</tr>" + "".join(
-            "<tr>" + "".join(cell(c) for c in r) + "</tr>" for r in b["rows"]) + "</table>"
-    if t == "samples":
-        return head + "".join(
-            (f"<h2>{html.escape(str(i['title']))}</h2>" if i.get("title") else "")
-            + f'<div class="pair"><div><span class="note">{html.escape(str(i.get("left_label", "")))}</span>'
-            f'<pre>{html.escape(str(i.get("left", "")))}</pre></div><div><span class="note">'
-            f'{html.escape(str(i.get("right_label", "")))}</span><pre>{html.escape(str(i.get("right", "")))}</pre></div></div>'
-            for i in b["items"])
-    if t == "list":
-        return head + "<ul>" + "".join(f"<li>{_inline(i)}</li>" for i in b["items"]) + "</ul>"
-    return ""
-
-
-def to_html(art: dict[str, Any]) -> str:
-    """The artifact as one self-contained page (no scripts, no outside files), to share or keep."""
-    d = art.get("decision") or {}
-    dec = ""
-    if d:
-        chosen = f"<p><b>Decided: {html.escape(d['chosen'])}</b> {html.escape(d.get('note') or '')}</p>" if d.get("chosen") \
-            else "<p class=\"note\">Open in OpenTrain to decide.</p>"
-        dec = (f'<div class="decision"><b>{html.escape(d["question"])}</b><p class="note">'
-               f'{" · ".join(html.escape(o) for o in d["options"])}</p>{chosen}</div>')
-    return (f"<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,"
-            f"initial-scale=1'><title>{html.escape(art['title'])}</title><style>{CSS}</style></head><body><main>"
-            f"<div class=meta>OpenTrain · {html.escape(art['kind'].replace('_', ' '))} · v{art['version']} · "
-            f"{html.escape(art['created'])}</div><h1>{html.escape(art['title'])}</h1>"
-            f"<p class=note>{html.escape(art.get('summary') or '')}</p>"
-            + "".join(_block_html(b) for b in art["blocks"]) + dec + "</main></body></html>")
+    return page(art, embed=embed, theme=theme)

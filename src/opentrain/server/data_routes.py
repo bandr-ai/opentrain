@@ -382,10 +382,18 @@ async def get_artifact(request: web.Request):
 async def artifact_html(request: web.Request):
     from .. import artifacts
 
-    a = await _run(artifacts.get, project_of(request).state, request.match_info["id"])
-    return web.Response(text=artifacts.to_html(a), content_type="text/html",
+    q = request.query
+    version = int(q["version"]) if q.get("version", "").isdigit() else None
+    a = await _run(artifacts.get, project_of(request).state, request.match_info["id"], version)
+    embed = q.get("embed") == "1"
+    # A static page: no scripts, nothing from outside (fonts only from this server), framed only by the app.
+    return web.Response(text=artifacts.to_html(a, embed=embed, theme=q.get("theme")), content_type="text/html",
                         headers={"Content-Disposition": f'inline; filename="{a["id"]}-v{a["version"]}.html"',
-                                 "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'"})
+                                 "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
+                                 "img-src data:; font-src 'self'; base-uri 'none'; form-action 'none'; "
+                                 "frame-ancestors 'self'",
+                                 "X-Frame-Options": "SAMEORIGIN", "X-Content-Type-Options": "nosniff",
+                                 "Referrer-Policy": "no-referrer", "Cache-Control": "no-cache"})
 
 
 @routes.post("/api/artifacts/{id}/decide")

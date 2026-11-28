@@ -81,9 +81,12 @@ def artifact_show(ctx, id: str, version: int | None = None) -> Any:
     return {**_out(a), "links": a["links"], "decided": a.get("decision"), "blocks": a["blocks"]}
 
 
-BLOCK = {"type": "object", "description": "One block: {type: text|stats|bars|table|samples|list, ...}. text: {text}; "
-         "stats: {items:[{label,value,note?}]}; bars: {title?, items:[{label,value,max?,note?}]}; table: {columns, rows}; "
-         "samples: {items:[{title?,left_label,left,right_label,right}]}; list: {title?, items:[..]}"}
+BLOCK = {"type": "object", "description": "One block: {type: text|stats|bars|chart|table|samples|list|callout|html, "
+         "title?, ...}. text: {text}; stats: {items:[{label,value,note?,tone?}]}; bars: {items:[{label,value,max?,"
+         "note?,tone?}]}; chart: {kind: line|bar, series:[{name, points:[[x,y],..]}], unit?, x_label?, y_label?, "
+         "note?, max?, zero?}; table: {columns, rows}; samples: {items:[{title?,left_label,left,right_label,right}]}; "
+         "list: {items:[..]}; callout: {tone: good|warn|bad|info, title?, text}; html: {html} (static HTML and CSS, "
+         "no scripts or outside files). tone is good|warn|bad|info."}
 
 
 def tools() -> list[Tool]:
@@ -105,8 +108,9 @@ def tools() -> list[Tool]:
           "blocks that leads one step and asks the person one decision. Use it at each milestone: recipe_plan "
           "(base model, method stages, settings, trainer, cost and time, which tests gate it; before spending), "
           "run_page (curves as steps and loss, cost so far), release (scores, limits, download and serving), "
-          "cost_ledger, or a new kind when the work needs one. Show evidence (numbers, samples), not claims. "
-          "Never put held-out task content or answers in an artifact.",
+          "cost_ledger, or a new kind when the work needs one. Load the artifact/design skill first: it says how a "
+          "page reads well (summary, one callout, a few numbers, then evidence as charts, tables or side-by-sides). "
+          "Show evidence, not claims. Never put held-out task content or answers in an artifact.",
           S({"kind": {"type": "string", "description": "snake_case: recipe_plan, run_page, release, cost_ledger, ..."},
              "title": {"type": "string"}, "summary": {"type": "string"},
              "blocks": {"type": "array", "items": BLOCK},

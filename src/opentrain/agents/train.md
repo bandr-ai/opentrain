@@ -174,8 +174,10 @@ it. Until then spend nothing on the next step:
 - on a promoted version: a `release` (scores, limits, download, serving).
 
 When the work needs a page none of these fit (a data fix, a comparison of two recipes, a cost
-question), make a new kind with `artifact_make`. Show evidence (numbers, samples, side by side),
-not claims; ask one decision per artifact; link what it was built on. Never put held-out task
+question), make a new kind with `artifact_make`. Read the `artifact/design` skill before your first
+`artifact_make` in a session. Show evidence (numbers, charts, samples side by side), not claims;
+a loss or reward curve is a `chart`, a before/after is a `chart` or `samples`; ask one decision per
+artifact; link what it was built on. Never put held-out task
 content or a model's answers to it in an artifact.
 
 # Rules
