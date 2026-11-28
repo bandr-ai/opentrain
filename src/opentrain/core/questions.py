@@ -12,8 +12,6 @@ from typing import Any
 
 from .tool import ToolContext, ToolError
 
-AUTO_SECONDS = 30  # a question with a default for every part takes the defaults when nobody answers in time
-
 
 def _after_wait(project: Any, sid: str) -> None:
     runner = project.services.get("runner")
@@ -31,8 +29,11 @@ class Questions:
             if q.get("status") == "pending":
                 project.store.update("question", q["id"], {"status": "cancelled"})
 
-    async def ask(self, ctx: ToolContext, questions: list[dict[str, Any]]) -> tuple[list[list[str]], bool]:
-        """The answers, and whether they are the defaults taken because nobody answered in time."""
+    async def ask(self, ctx: ToolContext, questions: list[dict[str, Any]]) -> tuple[list[list[str]], list[bool]]:
+        """The answers, and for each question whether it was decided by its default without asking.
+
+        A question with a default is a choice the agent could make: it is taken at once and never shown,
+        so the person only ever sees what only they can answer."""
         if not questions:
             raise ToolError("ask at least one question")
         for q in questions:
@@ -40,21 +41,20 @@ class Questions:
                 raise ToolError("each question needs text and at least one option")
             if q.get("default") is not None and q["default"] not in q["options"]:
                 raise ToolError(f"default {q['default']!r} is not one of the options")
-        defaults = [[q["default"]] for q in questions] if all(q.get("default") for q in questions) else None
+        decided = [bool(q.get("default")) for q in questions]
+        open_ = [{k: v for k, v in q.items() if k != "default"} for q in questions if not q.get("default")]
+        if not open_:
+            return [[q["default"]] for q in questions], decided
         meta = (self.project.session(ctx.session_id) or {}).get("metadata") or {}
         if meta.get("unattended"):  # nobody can answer: say so at once instead of waiting forever
-            if defaults:
-                return defaults, True
             raise ToolError("unattended run: nobody can answer questions. If one option is clearly safe and "
                             "cheap, take it and say which and why; otherwise stop and say what you need.")
         q = self.project.store.create("question", {
             "session_id": ctx.session_id, "message_id": ctx.message_id, "call_id": ctx.call_id,
-            "questions": questions, "status": "pending", "time": {"created": time.time()},
-            "auto_at": time.time() + AUTO_SECONDS if defaults else None})
+            "questions": open_, "status": "pending", "time": {"created": time.time()}})
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         self.waiting[q["id"]] = fut
-        timer = loop.call_later(AUTO_SECONDS, self._auto, q["id"]) if defaults else None
         self.project.store.publish("session.status", {"session_id": ctx.session_id, "status": "waiting",
                                                       "question_id": q["id"]}, durable=False)
         try:
@@ -63,28 +63,10 @@ class Questions:
             self.project.store.update("question", q["id"], {"status": "cancelled"})
             raise
         finally:
-            if timer:
-                timer.cancel()
             self.waiting.pop(q["id"], None)
             _after_wait(self.project, ctx.session_id)
-        return answers, bool((self.project.store.get("question", q["id"]) or {}).get("auto"))
-
-    def _auto(self, qid: str) -> None:
-        q = self.project.store.get("question", qid)
-        fut = self.waiting.get(qid)
-        if q is None or fut is None or fut.done() or q.get("status") != "pending" or not q.get("auto_at"):
-            return
-        answers = [[x["default"]] for x in q["questions"]]
-        self.project.store.update("question", qid, {"status": "answered", "answers": answers, "auto": True})
-        fut.set_result(answers)
-
-    def hold(self, qid: str) -> dict[str, Any]:
-        """The person is looking at it: stop the countdown and wait for their answer."""
-        q = self.project.store.get("question", qid)
-        if q is None or q.get("status") != "pending" or qid not in self.waiting:
-            raise KeyError(f"no pending question {qid}")
-        self.project.store.update("question", qid, {"auto_at": None})
-        return self.project.store.get("question", qid)
+        it = iter(answers)
+        return [[q["default"]] if d else next(it, []) for q, d in zip(questions, decided)], decided
 
     def reply(self, qid: str, answers: list[list[str]] | None, rejected: bool = False) -> dict[str, Any]:
         q = self.project.store.get("question", qid)

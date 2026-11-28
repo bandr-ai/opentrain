@@ -46,6 +46,6 @@ each training job.
 
 ## 4. Then train
 
-`dataset_recipe method=rl` (or `rejection`) gives the settings and the price; propose it.
+`dataset_recipe method=rl` (or `rejection`) gives the settings and the price; put it in the `recipe_plan` page's go-ahead (or `propose` it when no plan covers it).
 Single-turn only: multi-turn agent environments (tool calls, games over several steps) do not run
 in the loop yet. Say so if that is what they have.

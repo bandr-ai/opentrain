@@ -87,7 +87,6 @@ class Runner:
         self.loop = loop
         self.tasks: dict[str, asyncio.Task] = {}
         self.turns: dict[str, Turn] = {}
-        self.interrupted: dict[str, float] = {}  # session id -> when the person last interrupted it
         self.on_usage: list[Any] = []  # callables(session, message, usage, cost) -> None; may raise BudgetStop
         self._settle_crashed()
 
@@ -188,16 +187,7 @@ class Runner:
         self.store.publish("session.status", {"session_id": sid, "status": "busy" if self.busy(sid) else "idle"},
                            durable=False)
 
-    def stepped_in(self, sid: str, since: float) -> bool:
-        """Whether the person interrupted the session or wrote in it after ``since``: a default
-        decision waiting on them no longer applies."""
-        if self.interrupted.get(sid, 0) > since:
-            return True
-        return any(m["role"] == "user" and (m.get("time") or {}).get("created", 0) > since
-                   for m in self.project.messages(sid))
-
     async def interrupt(self, sid: str) -> bool:
-        self.interrupted[sid] = _now()
         t = self.tasks.get(sid)
         if not t or t.done():
             return False

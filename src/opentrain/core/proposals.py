@@ -18,13 +18,14 @@ import fnmatch
 import time
 from typing import Any
 
-from .questions import AUTO_SECONDS, _after_wait
+from .questions import _after_wait
 from .tool import ToolContext, ToolError
 
 GRANTABLE = ("spend", "upload", "job.start", "promote", "serve", "webfetch", "download")
-REPLIES = ("approve", "change", "skip", "hold")
-AUTO = "approved automatically"
+REPLIES = ("approve", "change", "skip")
+FREE = "free and gated by nothing, so it went ahead without asking"
 GRANT_SECONDS = 2 * 3600
+PLAN_GRANT_SECONDS = 12 * 3600  # an approved plan covers its whole run: baseline, training, scoring
 SPEND_SLACK = 1.5  # a granted step may spend up to 1.5x its estimate (+5 cents) before asking again
 
 
@@ -52,41 +53,38 @@ class Proposals:
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         self.waiting[p["id"]] = fut
-        timer = None
         auto = self._unattended(ctx.session_id, needs)
-        if auto is not None:  # nobody is there to click: decide now instead of waiting forever
+        if auto is None and self.harmless(p):  # nothing for the person to decide: never shown as a question
+            auto = ("approved", FREE, "approve")
+        if auto is not None:
             self._settle(p["id"], *auto)
-        elif self.harmless(p):
-            # Free and gated by nothing: it goes ahead unless the person stops it within AUTO_SECONDS.
-            self.store.update("proposal", p["id"], {"auto_at": time.time() + AUTO_SECONDS})
-            timer = loop.call_later(AUTO_SECONDS, self._auto, p["id"])
-        self.store.publish("session.status", {"session_id": ctx.session_id, "status": "waiting",
-                                              "proposal_id": p["id"]}, durable=False)
+        else:
+            self.store.publish("session.status", {"session_id": ctx.session_id, "status": "waiting",
+                                                  "proposal_id": p["id"]}, durable=False)
         try:
             reply, message = await fut
         except asyncio.CancelledError:
             self.store.update("proposal", p["id"], {"status": "cancelled"})
             raise
         finally:
-            if timer:
-                timer.cancel()
             self.waiting.pop(p["id"], None)
             _after_wait(self.project, ctx.session_id)
-        if reply == "approve":
-            self.grants[ctx.session_id] = {"proposal_id": p["id"], "needs": needs, "cap_usd": p["cost_usd"],
-                                           "spent_usd": 0.0, "until": time.time() + GRANT_SECONDS}
+        if reply == "approve" and needs:
+            self.grant(ctx.session_id, needs, p["cost_usd"], source=p["id"])
         return reply, message
+
+    def grant(self, sid: str, needs: list[str], cap_usd: float, *, source: str,
+              seconds: float = GRANT_SECONDS) -> None:
+        """The person approved a step (a proposal, or a plan page's go-ahead): its gated actions need no
+        further asking, and its spending up to about ``cap_usd``. A newer approval replaces an older one."""
+        self.grants[sid] = {"source": source, "needs": [n for n in needs if n in GRANTABLE],
+                            "cap_usd": float(cap_usd or 0.0), "spent_usd": 0.0, "until": time.time() + seconds}
 
     @staticmethod
     def harmless(p: dict[str, Any]) -> bool:
         """A step that may go ahead by itself: it costs nothing and needs no gated action (no spend,
         upload, training, serving, promotion, fetch or download). Everything else waits for the person."""
         return not p.get("needs") and not float(p.get("cost_usd") or 0)
-
-    def _auto(self, pid: str) -> None:
-        p = self.store.get("proposal", pid)
-        if p and p.get("status") == "pending" and p.get("auto_at") and pid in self.waiting and self.harmless(p):
-            self._settle(pid, "approved", AUTO, "approve")
 
     def _unattended(self, sid: str, needs: list[str]) -> tuple[str, str, str] | None:
         """``opentrain run --yes`` (auto_approve) approves; an unattended run without it skips."""
@@ -105,9 +103,6 @@ class Proposals:
         p = self.store.get("proposal", pid)
         if p is None or p.get("status") != "pending" or pid not in self.waiting:
             raise KeyError(f"no pending proposal {pid}")
-        if reply == "hold":  # the person is looking at it: stop the countdown
-            self.store.update("proposal", pid, {"auto_at": None})
-            return self.store.get("proposal", pid)
         if reply == "change" and not (message or "").strip():
             raise ValueError("say what to change")
         return self._settle(pid, {"approve": "approved", "change": "changed", "skip": "skipped"}[reply], message,
@@ -160,12 +155,13 @@ async def propose_tool(ctx: ToolContext, title: str, why: str = "", cost_usd: fl
     reply, message = await ps.propose(ctx, {"title": title, "why": why, "cost_usd": cost_usd, "minutes": minutes,
                                             "needs": needs or [], "stage": stage, "dataset": dataset})
     if reply == "approve":
+        if message == FREE:
+            return (f"Not shown to the person: {title} is {FREE}. Do it now. Free steps never need propose: just "
+                    "do them and say what you did in a line.")
         covered = ", ".join(needs or []) or "nothing gated"
-        how = (f" (nobody answered within {AUTO_SECONDS} seconds and the step is free, so it went ahead)"
-               if message == AUTO else "")
-        return (f"Approved{how}: {title}. Do it now. This step's approval covers {covered}"
+        return (f"Approved: {title}. Do it now. This step's approval covers {covered}"
                 + (f" up to about ${cost_usd:.2f}" if cost_usd else "") + "; anything beyond that still asks. "
-                "When it is done, report the result in a few lines and propose the next step.")
+                "When it is done, report the result in a line or two and go on.")
     if reply == "message":
         return (f"Not approved yet: instead of choosing, the person wrote: {message}\nAnswer that first, briefly. "
                 "Do not run this step unless they asked you to; propose it again afterwards if it still makes sense.")

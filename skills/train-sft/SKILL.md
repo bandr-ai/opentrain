@@ -9,7 +9,7 @@ description: Fine-tune a small LoRA adapter on the chosen attempts with the Trai
 
 1. Check the trainer: `backends` says which can run here (modal and runpod need their sign-in,
    tinker needs `TINKER_API_KEY`, local needs torch and a GPU or MPS); `trainer_set` switches.
-2. `train_estimate` gives the price; propose it. `job_start` reserves the estimate against the
+2. `train_estimate` gives the price; it goes in the `recipe_plan` page's go-ahead (or `propose` it when no plan covers it). `job_start` reserves the estimate against the
    budget and refuses if it does not fit.
 3. The job runs on the server; you get a reminder when it ends. Do not poll; `job_logs` when the
    user asks how it is going, `job_stop` to cancel.

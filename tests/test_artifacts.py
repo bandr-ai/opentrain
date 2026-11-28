@@ -1,4 +1,4 @@
-"""Artifacts: versioned pages of blocks that each ask one decision; two built from the project's data."""
+"""Artifacts: versioned pages of blocks; a few ask the person one decision; two built from the project's data."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def test_the_data_card_shows_what_is_trained_and_why_some_is_left_out(tmp_path):
     assert stats["work sessions"] == 6 and stats["changed code"] == 4 and stats["requests to train on"] == 3
     left_out = next(b for b in a["blocks"] if b.get("title") == "Requests left out, and why")
     assert left_out["items"] == [{"label": "pushback after", "value": 1, "max": 4}]
-    assert a["decision"]["question"] == "Train on this data?"
+    assert a["decision"] is None  # it shows; the agent carries on to building the training set
     assert A.data_card(tmp_path)["version"] == 2  # refreshing keeps one card, versioned
 
 
