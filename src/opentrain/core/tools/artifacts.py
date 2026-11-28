@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from ... import artifacts as art
@@ -16,7 +17,7 @@ def _out(a: dict[str, Any]) -> dict[str, Any]:
     d = a.get("decision") or {}
     return {"id": a["id"], "kind": a["kind"], "version": a["version"], "title": a["title"], "summary": a["summary"],
             "open": f"#/a/{a['id']}", "decision": d.get("question"), "options": d.get("options"),
-            "chosen": d.get("chosen")}
+            "chosen": d.get("chosen"), "default": d.get("default")}
 
 
 def _guard(fn, *a, **kw):
@@ -34,13 +35,41 @@ def eval_comparison(ctx, after: str, before: str = "base", links: list[str] | No
     return _out(_guard(art.eval_comparison, _state(ctx), before=before, after=after, links=links))
 
 
+def _take_default_later(ctx, a: dict[str, Any]) -> None:
+    """If nobody decides within AUTO_SECONDS, take the default and tell the agent, so the work goes on."""
+    d = a.get("decision") or {}
+    if not d.get("auto_at") or ctx.loop is None:
+        return
+    state, sid, aid, version = _state(ctx), ctx.session_id, a["id"], a["version"]
+    since = time.time()
+
+    def fire() -> None:
+        runner = ctx.project.services.get("runner")
+        if runner is None or runner.stepped_in(sid, since):  # they interrupted or wrote: theirs to decide
+            return
+        try:
+            done = art.decide_by_default(state, aid, version)
+        except art.ArtifactError:
+            return
+        if done is not None:
+            runner.prompt(sid, f"{d['question']} {d['default']}. (Taken by default: nobody answered within "
+                               f"{art.AUTO_SECONDS} seconds; on {a['title']}, #/a/{aid}.) Go on with it; the person "
+                               "can still change course by writing.", synthetic=True)
+
+    ctx.loop.call_soon_threadsafe(ctx.loop.call_later, art.AUTO_SECONDS, fire)
+
+
 def artifact_make(ctx, kind: str, title: str, blocks: list[dict[str, Any]], summary: str = "",
                   decision: dict[str, Any] | None = None, links: list[str] | None = None,
                   id: str | None = None) -> Any:
     if kind in art.BUILTIN:
         raise ToolError(f"{kind} is built from the project's own data: call the {kind} tool")
-    return _out(_guard(art.save, _state(ctx), kind=kind, title=title, blocks=blocks, summary=summary,
-                       decision=decision, links=links, id=id))
+    if decision and getattr(ctx.agent, "name", "") == "outside":  # no OpenTrain turn to hand a default to
+        decision = {k: v for k, v in decision.items() if k != "default"}
+    a = _guard(art.save, _state(ctx), kind=kind, title=title, blocks=blocks, summary=summary,
+               decision=decision, links=links, id=id)
+    _take_default_later(ctx, a)
+    return _out(a)
 
 
 def artifacts_list(ctx) -> Any:
@@ -81,7 +110,10 @@ def tools() -> list[Tool]:
           S({"kind": {"type": "string", "description": "snake_case: recipe_plan, run_page, release, cost_ledger, ..."},
              "title": {"type": "string"}, "summary": {"type": "string"},
              "blocks": {"type": "array", "items": BLOCK},
-             "decision": {"type": "object", "description": "{question, options: [2-5 short labels]}"},
+             "decision": {"type": "object", "description": "{question, options: [2-5 short labels], default?}. "
+                          "default (one of options, your recommendation) is taken after 30 s without an "
+                          "answer: give one only when the choice is free and easy to undo, never for spending, "
+                          "accounts, sending data out, deleting or what goes live."},
              "links": strs, "id": {"type": "string", "description": "an existing artifact's id: save a new version"}},
             ["kind", "title", "blocks"]), artifact_make),
         T("artifacts", "The project's artifacts, newest first, with the decision each one asks and what the person "

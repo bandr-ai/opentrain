@@ -26,6 +26,7 @@ import fnmatch
 import time
 from typing import Any
 
+from .questions import _after_wait
 from .tool import ToolContext, ToolError
 
 BASE: list[dict[str, Any]] = [
@@ -142,7 +143,7 @@ class Permissions:
             raise
         finally:
             self.waiting.pop(req["id"], None)
-            self.store.publish("session.status", {"session_id": ctx.session_id, "status": "busy"}, durable=False)
+            _after_wait(self.project, ctx.session_id)
         if reply == "reject":
             raise PermissionRejected("the user rejected this" + (f": {message}" if message else
                                                                  "; ask what they want instead"))

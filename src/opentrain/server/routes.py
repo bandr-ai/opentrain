@@ -97,6 +97,8 @@ async def providers(request: web.Request):
 async def question_reply(request: web.Request):
     b = await body_of(request)
     qs = project_of(request).services["questions"]
+    if b.get("hold"):
+        return ok(qs.hold(request.match_info["qid"]))
     return ok(qs.reply(request.match_info["qid"], b.get("answers"), rejected=bool(b.get("reject"))))
 
 

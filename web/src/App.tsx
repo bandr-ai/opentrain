@@ -199,6 +199,7 @@ export default function App() {
   }
 
   const running = jobs.filter((j) => j.state === "running");
+  const stale = useStale();
   const b = board?.budget;
   const onChat = route.page === "";
   const waiting = Object.values(busy).some((s) => s === "waiting");
@@ -230,6 +231,16 @@ export default function App() {
           <a className="toplink" href="#/settings">settings</a>
           <span className={`conn ${connected ? "" : "off"}`} title={connected ? "connected" : "reconnecting…"}><i /></span>
         </header>
+        {stale && (
+          <div className="stale-bar small">
+            {stale === "restart" ? (
+              <>OpenTrain was updated after this server started, so it is running old code. Restart it to get the
+                new version: <code>opentrain stop</code> then <code>opentrain web</code>.</>
+            ) : (
+              <>This page is out of date. <button className="btn sm primary" onClick={() => window.location.reload()}>Reload</button></>
+            )}
+          </div>
+        )}
         <div className={`body ${onChat ? "chat" : "view"}`}>
           {!onChat && (
             <main className="main">
@@ -244,4 +255,19 @@ export default function App() {
       <Toasts />
     </Ctx.Provider>
   );
+}
+
+/** "restart" when the server runs older code than is installed; "reload" when this tab runs an older page. */
+function useStale(): "restart" | "reload" | null {
+  const [stale, setStale] = useState<"restart" | "reload" | null>(null);
+  useEffect(() => {
+    const mine = document.querySelector<HTMLScriptElement>('script[src*="/assets/index-"]')?.src.split("/").pop();
+    const check = () => api.get<{ restart: boolean; script: string | null }>("/api/build").then((b) => {
+      setStale(b.restart ? "restart" : mine && b.script && b.script !== mine ? "reload" : null);
+    }).catch(() => {});
+    check();
+    const t = setInterval(check, 60_000);
+    return () => clearInterval(t);
+  }, []);
+  return stale;
 }

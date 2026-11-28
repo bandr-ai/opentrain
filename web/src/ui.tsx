@@ -194,3 +194,25 @@ export function throttle(fn: () => void, ms: number) {
     }, ms);
   };
 }
+
+// ------------------------------------------------------------------ deciding by default
+
+/** "Going ahead with X in 23s · wait": a free, easy-to-undo choice the agent will take by itself
+ *  unless the person stops the countdown. Renders nothing once it is held (``at`` is null). */
+export function AutoCountdown({ at, what, onHold }: { at?: number | null; what: string; onHold: () => void }) {
+  const [now, setNow] = useState(Date.now() / 1000);
+  useEffect(() => {
+    if (!at) return;
+    const t = setInterval(() => setNow(Date.now() / 1000), 500);
+    return () => clearInterval(t);
+  }, [at]);
+  if (!at) return null;
+  const left = Math.max(0, Math.ceil(at - now));
+  return (
+    <div className="auto-count small">
+      <span className="auto-bar"><span style={{ width: `${Math.min(100, (left / 30) * 100)}%` }} /></span>
+      <span>{left > 0 ? <>Going ahead with <b>{what}</b> in {left}s</> : <>Going ahead with <b>{what}</b>…</>}</span>
+      {left > 0 && <button className="btn ghost sm" onClick={onHold}>wait, I'll decide</button>}
+    </div>
+  );
+}

@@ -1,7 +1,7 @@
 import { KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, events, Job, Message, Part, Permission, Proposal, Question, Session } from "../api";
 import { go, useApp } from "../App";
-import { ago, dur, Icon, Markdown, money, pct, Progress, toastError } from "../ui";
+import { ago, AutoCountdown, dur, Icon, Markdown, money, pct, Progress, toastError } from "../ui";
 import { Curve } from "./Board";
 import { Scorecard } from "./Scorecard";
 import { ArtifactInline, artifactIdOf } from "./Artifacts";
@@ -313,6 +313,8 @@ export function ProposalCard({ p, onDone, compact }: { p: Proposal; onDone?: () 
       setBusy(false);
     }
   };
+  const hold = () => api.post(`/api/session/${p.session_id}/proposal/${p.id}/reply`, { reply: "hold" })
+    .then(() => onDone?.()).catch(() => {});
   const cost = p.cost_usd ? `~${money(p.cost_usd)}` : "free";
   return (
     <div className={`next ${compact ? "compact" : ""}`}>
@@ -324,6 +326,7 @@ export function ProposalCard({ p, onDone, compact }: { p: Proposal; onDone?: () 
         {p.minutes ? <span>~{p.minutes < 1 ? "<1" : Math.round(p.minutes)} min</span> : null}
         {p.needs.map((n) => <span key={n} className="need">{NEEDS[n] || n}</span>)}
       </div>
+      <AutoCountdown at={p.auto_at} what="this step" onHold={hold} />
       {changing ? (
         <div className="next-change">
           <input className="input" autoFocus placeholder="what should be different?" value={text}
@@ -334,7 +337,7 @@ export function ProposalCard({ p, onDone, compact }: { p: Proposal; onDone?: () 
       ) : (
         <div className="next-btns">
           <button className="btn primary" disabled={busy} onClick={() => reply("approve")}>Approve{p.cost_usd ? ` · ${cost}` : ""}</button>
-          <button className="btn" disabled={busy} onClick={() => setChanging(true)}>Change</button>
+          <button className="btn" disabled={busy} onClick={() => { setChanging(true); if (p.auto_at) hold(); }}>Change</button>
           <button className="btn ghost" disabled={busy} onClick={() => reply("skip")}>Skip</button>
         </div>
       )}
@@ -551,8 +554,17 @@ function QuestionAsk({ q, onDone }: { q: Question; onDone: () => void }) {
     onDone();
   };
   const ready = answers.every((a, i) => a.length || other[i].trim());
+  const held = useRef(false);
+  const hold = () => {
+    if (!q.auto_at || held.current) return;
+    held.current = true;
+    api.post(`/api/session/${q.session_id}/question/${q.id}/reply`, { hold: true }).then(onDone)
+      .catch(() => { held.current = false; });  // try again on the next touch
+  };
+  const defaults = q.questions.map((x) => x.default).filter(Boolean).join(", ");
   return (
     <div className="ask">
+      <AutoCountdown at={q.auto_at} what={defaults} onHold={hold} />
       {q.questions.map((qq, i) => (
         <div key={i} style={{ display: "grid", gap: 8 }}>
           <h3>{qq.question}</h3>
@@ -560,13 +572,14 @@ function QuestionAsk({ q, onDone }: { q: Question; onDone: () => void }) {
             {qq.options.map((o) => {
               const on = answers[i].includes(o);
               return (
-                <button key={o} className={`opt ${on ? "on" : ""}`} onClick={() => setAnswers((a) => a.map((x, j) =>
-                  j !== i ? x : qq.multiple ? (on ? x.filter((y) => y !== o) : [...x, o]) : [o]))}>{o}</button>
+                <button key={o} className={`opt ${on ? "on" : ""}`} onClick={() => { hold(); setAnswers((a) => a.map((x, j) =>
+                  j !== i ? x : qq.multiple ? (on ? x.filter((y) => y !== o) : [...x, o]) : [o])); }}>
+                  {o}{qq.default === o ? <span className="faint"> · suggested</span> : null}</button>
               );
             })}
           </div>
           <input className="input" placeholder="or type your own answer" value={other[i]}
-            onChange={(e) => setOther((a) => a.map((x, j) => (j === i ? e.target.value : x)))}
+            onChange={(e) => { hold(); setOther((a) => a.map((x, j) => (j === i ? e.target.value : x))); }}
             onKeyDown={(e) => { if (e.key === "Enter" && ready) submit(); }} />
         </div>
       ))}
