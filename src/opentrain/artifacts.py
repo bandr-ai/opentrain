@@ -1,11 +1,16 @@
-"""Artifacts: the pages that lead the work. Each stage of post-training ends in one, and each one asks
-the person for one decision.
+"""Artifacts: the pages that lead the work. Each stage of post-training ends in one. A page asks the
+person something only when it is theirs to decide (spending on a plan, what goes live); everything
+else the agent decides and the page just shows.
 
 An artifact is a versioned page of blocks, kept under ``<state>/artifacts/<id>/v<n>.json``. Two kinds
 are built from what OpenTrain already knows (``data_card``: what the model will learn from;
 ``eval_comparison``: whether it got better). Any other kind (a recipe plan, a run page, a release, or
 something no one planned for) is written by the agent from the same blocks, so a new artifact never
 needs new code. Every save is a new version; a decision is recorded on the version it was made on.
+
+A decision may carry ``approves: {needs, cost_usd}``: choosing its first option is the person's
+go-ahead for that whole plan, so its gated actions and spending (up to about ``cost_usd``) are granted
+to the session that made the page and nothing asks again for them.
 
 Blocks (``type`` plus fields):
 
@@ -26,7 +31,6 @@ import functools
 import json
 import re
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -59,8 +63,7 @@ def _root(state: Path) -> Path:
     return state / "artifacts"
 
 
-AUTO_SECONDS = 30  # a decision with a default takes it when nobody answers in time
-_LOCK = threading.RLock()  # one writer at a time: a save, a click, a hold and a default never overwrite each other
+_LOCK = threading.RLock()  # one writer at a time: a save and a click never overwrite each other
 
 
 def _locked(fn):
@@ -110,18 +113,28 @@ def _decision(d: Any) -> dict[str, Any] | None:
     if not isinstance(d, dict) or not d.get("question") or not isinstance(d.get("options"), list) \
             or not 2 <= len(d["options"]) <= 5 or not all(isinstance(o, str) and o for o in d["options"]):
         raise ArtifactError("decision needs a question and 2-5 option labels")
-    out = {"question": str(d["question"]), "options": list(d["options"])}
     if d.get("default") is not None:
-        if d["default"] not in out["options"]:
-            raise ArtifactError(f"default {d['default']!r} is not one of the options")
-        out.update(default=d["default"], auto_at=time.time() + AUTO_SECONDS)
+        raise ArtifactError("a page asks only what the person must decide (spending, what goes live). If you "
+                            "would pick a default, decide it yourself, leave out the decision and say what you chose")
+    out = {"question": str(d["question"]), "options": list(d["options"])}
+    if d.get("approves") is not None:
+        from .core.proposals import GRANTABLE
+
+        ap = d["approves"]
+        needs = ap.get("needs") if isinstance(ap, dict) else None
+        cost = ap.get("cost_usd", 0) if isinstance(ap, dict) else None
+        if not isinstance(needs, list) or not needs or any(n not in GRANTABLE for n in needs) \
+                or not isinstance(cost, (int, float)) or cost < 0:
+            raise ArtifactError(f"approves is {{needs: [{', '.join(GRANTABLE)}], cost_usd}}: what choosing the "
+                                "first option lets the plan do without asking again")
+        out["approves"] = {"needs": list(dict.fromkeys(needs)), "cost_usd": round(float(cost), 4)}
     return out
 
 
 @_locked
 def save(state: Path, *, kind: str, title: str, blocks: list[dict[str, Any]], summary: str = "",
          decision: dict[str, Any] | None = None, links: list[str] | None = None, id: str | None = None,
-         source: str = "agent") -> dict[str, Any]:
+         source: str = "agent", session_id: str | None = None) -> dict[str, Any]:
     """Save a new artifact, or a new version of ``id``. Returns it."""
     kind = (kind or "").strip()
     if not re.fullmatch(r"[a-z][a-z0-9_]{0,40}", kind):
@@ -142,6 +155,8 @@ def save(state: Path, *, kind: str, title: str, blocks: list[dict[str, Any]], su
     art = {"id": aid, "kind": kind, "title": str(title).strip()[:200], "summary": str(summary)[:2000],
            "version": (prev["version"] + 1) if prev else 1, "created": _now(), "source": source,
            "blocks": check_blocks(blocks), "decision": _decision(decision), "links": links}
+    if session_id:
+        art["session_id"] = session_id
     if len(json.dumps(art, default=str)) > MAX_BYTES:
         raise ArtifactError("artifact too large (2 MB): clip samples or tables")
     write_json(_root(state) / aid / f"v{art['version']}.json", art)
@@ -208,32 +223,19 @@ def decide(state: Path, aid: str, option: str, note: str = "", by: str = "person
         raise ArtifactError(f"{aid} asks for no decision")
     if option not in d["options"]:
         raise ArtifactError(f"choose one of: {', '.join(d['options'])}")
-    d.update(chosen=option, note=str(note)[:2000], by=by, at=_now(), auto_at=None)
+    if d.get("chosen"):
+        raise ArtifactError(f"{aid} was already decided: {d['chosen']}")
+    d.update(chosen=option, note=str(note)[:2000], by=by, at=_now())
     write_json(vs[-1], art)
     return art
 
 
-@_locked
-def hold(state: Path, aid: str) -> dict[str, Any]:
-    """The person is looking at it: stop the countdown to the default and wait for them."""
-    vs = _versions(state, aid)
-    if not vs:
-        raise ArtifactError(f"no artifact {aid!r}")
-    art = json.loads(vs[-1].read_text())
-    if (art.get("decision") or {}).get("auto_at"):
-        art["decision"]["auto_at"] = None
-        write_json(vs[-1], art)
-    return art
-
-
-@_locked
-def decide_by_default(state: Path, aid: str, version: int) -> dict[str, Any] | None:
-    """Take the default if this version's decision is still open and nobody stopped the countdown."""
-    a = latest(state, aid)
-    d = (a or {}).get("decision") or {}
-    if not a or a["version"] != version or d.get("chosen") or not d.get("auto_at") or not d.get("default"):
-        return None
-    return decide(state, aid, d["default"], by="default", version=version)
+def approval(art: dict[str, Any]) -> dict[str, Any] | None:
+    """What the decision just made approves: its ``approves`` when the first option (the go-ahead) was chosen."""
+    d = art.get("decision") or {}
+    if d.get("approves") and d.get("chosen") == d["options"][0]:
+        return d["approves"]
+    return None
 
 
 # ---------------------------------------------------------------------------- built-in artifacts
@@ -330,9 +332,7 @@ def data_card(state: Path, *, id: str = "data-card") -> dict[str, Any]:
                 title=f"Your coding data: {well} requests to train on",
                 summary=f"{len(index)} sessions from {', '.join(AGENTS.get(a, a) for a in by_agent)}; "
                         f"{len(coding)} changed code; {well} of {len(examples)} requests ended well and are trained.",
-                blocks=blocks,
-                decision={"question": "Train on this data?",
-                          "options": ["Train on it", "Leave some out first", "Add public coding data too"]})
+                blocks=blocks)
 
 
 def _short(args: str, n: int = 140) -> str:
@@ -346,7 +346,7 @@ def _short(args: str, n: int = 140) -> str:
 
 
 def eval_comparison(state: Path, *, before: str = "base", after: str, id: str | None = None,
-                    links: list[str] | None = None) -> dict[str, Any]:
+                    links: list[str] | None = None, session_id: str | None = None) -> dict[str, Any]:
     """Did it get better: two score sets on the same held-out tasks, task by task."""
     from .web.api import version_scores
 
@@ -401,9 +401,10 @@ def eval_comparison(state: Path, *, before: str = "base", after: str, id: str | 
                 title=f"{after} vs {before}: {verdict}",
                 summary=f"{after} passes {pb}/{len(both)} held-out tasks, {before} {pa}/{len(both)}; "
                         f"{len(fixed)} fixed, {len(broke)} regressed.",
-                blocks=blocks, links=links,
-                decision={"question": f"What next for {after}?",
-                          "options": ["Ship it", "Improve the data and train again", "Roll back"]})
+                blocks=blocks, links=links, session_id=session_id,
+                decision={"question": f"Ship {after}?",
+                          "options": ["Ship it", "Not yet: keep improving"],
+                          "approves": {"needs": ["promote"], "cost_usd": 0}})
 
 
 def _slug(s: str) -> str:

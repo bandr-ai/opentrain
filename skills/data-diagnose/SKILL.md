@@ -33,9 +33,9 @@ a few themes the person recognises.
    evidence (`trace:request` ids; the sessions count is the distinct traces in it), `trainable` (true/false) and the fix: for a trainable one, what
    data teaches it (the corrected continuation as the target, repair tasks from the failing
    checks, held-out tasks from the same repo); for a rule, the rule.
-7. Do not ask the person to pick from the themes. `data_card` shows them as evidence. Only a
-   trainable theme seen in 5+ sessions earns one yes/no question, with your recommendation;
-   `themes_choose` records a yes. The default goal stays their routine work, cheaper.
+7. Do not ask the person about the themes. `data_card` shows them as evidence. A trainable theme
+   seen in 5+ sessions goes in (`themes_choose`), said in a line. The default goal stays their
+   routine work, cheaper.
 
 ## Honesty
 

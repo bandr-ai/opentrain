@@ -401,15 +401,16 @@ async def decide_artifact(request: web.Request):
     from .. import artifacts
 
     b = await body_of(request)
-    return ok(await _run(artifacts.decide, project_of(request).state, request.match_info["id"],
-                         str(b.get("option") or ""), str(b.get("note") or "")))
+    p = project_of(request)
+    a = await _run(artifacts.decide, p.state, request.match_info["id"], str(b.get("option") or ""),
+                   str(b.get("note") or ""))
+    ap = artifacts.approval(a)
+    props = p.services.get("proposals")
+    if ap and a.get("session_id") and props is not None:  # the go-ahead on a plan: the whole run is approved
+        from ..core.proposals import PLAN_GRANT_SECONDS
 
-
-@routes.post("/api/artifacts/{id}/hold")
-async def hold_artifact(request: web.Request):
-    from .. import artifacts
-
-    return ok(await _run(artifacts.hold, project_of(request).state, request.match_info["id"]))
+        props.grant(a["session_id"], ap["needs"], ap["cost_usd"], source=a["id"], seconds=PLAN_GRANT_SECONDS)
+    return ok(a)
 
 
 @routes.post("/api/artifacts/data-card")

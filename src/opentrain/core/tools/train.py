@@ -488,11 +488,13 @@ def tools() -> list[Tool]:
     return [
         T("status", "Policy (Trainfile), budget left, task counts, what is live, recent versions and running jobs. "
           "Call this first.", S(), status),
-        T("init", "Write a Trainfile for this project (only when none exists).",
+        T("init", "Write a Trainfile for this project (only when none exists). It asks nothing: creating one "
+          "spends nothing, and every spend still waits for the person's go-ahead. Keep the default budget unless "
+          "they named one.",
           S({"goal": {"type": "string", "description": "what the model should get better at, in plain words "
                                                       "(or speed/fix/cost for coding-session work)"}, "budget": {"type": "string"},
              "trainer": {"type": "string"}, "base_model": {"type": "string"}, "heldout": {"type": "string"}}),
-          init, permission=lambda a: [("write", "Trainfile")]),
+          init),
         T("goal_set", "Set the Trainfile's goal: what the model should get better at, in the user's words. Changes "
           "only the goal line; creates the Trainfile with defaults when there is none.",
           S({"goal": {"type": "string"}}, ["goal"]), goal_set, title=lambda a: a["goal"][:60]),

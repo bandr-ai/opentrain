@@ -224,15 +224,17 @@ def _todo(ctx: ToolContext, todos: list[dict[str, Any]]) -> ToolResult:
 
 async def _question(ctx: ToolContext, questions: list[dict[str, Any]]) -> ToolResult:
     qs = ctx.project.services["questions"]
-    answers, auto = await qs.ask(ctx, questions)
+    answers, decided = await qs.ask(ctx, questions)
     lines = []
-    for q, a in zip(questions, answers):
-        lines.append(f"Q: {q.get('question')}\nA: {', '.join(a) if a else '(no answer)'}")
-    if auto:
-        lines.append("Nobody answered in time, so your defaults were taken. Go on with them; the person can still "
-                     "change course by writing.")
-    return ToolResult("\n\n".join(lines), title="decided by default" if auto else "asked the user",
-                      metadata={"answers": answers, "auto": auto})
+    for q, a, d in zip(questions, answers, decided):
+        lines.append(f"Q: {q.get('question')}\nA: {', '.join(a) if a else '(no answer)'}"
+                     + (" (your default: decided without asking)" if d else ""))
+    if any(decided):
+        lines.append("A question with a default is one you can decide, so it was not shown to the person. Go on "
+                     "with it and say what you chose in a line. Next time just decide.")
+    asked = not all(decided)
+    return ToolResult("\n\n".join(lines), title="asked the user" if asked else "decided",
+                      metadata={"answers": answers, "decided": decided})
 
 
 # ---------------------------------------------------------------------- skill, subagent, webfetch
@@ -337,23 +339,21 @@ def tools() -> list[Tool]:
                                                            "enum": ["pending", "in_progress", "completed", "cancelled"]}},
                  "required": ["content", "status"]}}}, ["todos"]),
              _todo),
-        Tool("question", "Ask the user one or more multiple-choice questions and wait for the answers. Use for real "
-             "decisions only; decide small things yourself and say what you chose. Give a default (your "
-             "recommendation) when the choice is free and easy to undo: if every question has one, the defaults "
-             "are taken after 30 seconds without an answer, so the work keeps moving. Never give a default for "
-             "which account, trainer or paid model to use, sending data out, deleting anything, or what goes "
-             "live: those wait for the person.",
+        Tool("question", "Ask the person something only they can answer, and wait. Rare: a missing account or key, "
+             "a goal you cannot tell from what they said. Never ask what they already told you, what you can find "
+             "out, what you can decide and undo, or anything about OpenTrain itself. A question given a default is "
+             "decided by that default at once and never shown.",
              schema({"questions": {"type": "array", "items": {"type": "object", "properties": {
                  "question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}},
                  "multiple": {"type": "boolean"},
-                 "default": {"type": "string", "description": "one of options: taken after 30 s without an answer"}},
+                 "default": {"type": "string", "description": "one of options: decides it without asking"}},
                  "required": ["question", "options"]}}}, ["questions"]),
              _question),
         Tool("propose", "Propose the next step and wait for the user to approve, change or skip it. Use this for "
              "anything that costs money, sends data out, trains or changes what is live: one step at a time, with "
              "what it is, why, the cost and how long. Approving grants the gated actions listed in needs for this step "
-             "only, so the user is not asked again for each of them. A free step with no needs goes ahead by "
-             "itself after 30 seconds unless the person stops it; one that costs or needs anything always waits.",
+             "only, so the user is not asked again for each of them. Never for free steps (just do them), and "
+             "never for steps an approved plan already covers.",
              schema({"title": {"type": "string", "description": "the step, imperative and short: 'Evaluate v2 on "
                                                                    "the 24 held-out rows'"},
                      "why": {"type": "string", "description": "one or two sentences: why this is the next step"},

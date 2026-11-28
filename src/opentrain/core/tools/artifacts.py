@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from ... import artifacts as art
@@ -17,7 +16,7 @@ def _out(a: dict[str, Any]) -> dict[str, Any]:
     d = a.get("decision") or {}
     return {"id": a["id"], "kind": a["kind"], "version": a["version"], "title": a["title"], "summary": a["summary"],
             "open": f"#/a/{a['id']}", "decision": d.get("question"), "options": d.get("options"),
-            "chosen": d.get("chosen"), "default": d.get("default")}
+            "chosen": d.get("chosen"), "approves": d.get("approves")}
 
 
 def _guard(fn, *a, **kw):
@@ -32,31 +31,8 @@ def data_card(ctx) -> Any:
 
 
 def eval_comparison(ctx, after: str, before: str = "base", links: list[str] | None = None) -> Any:
-    return _out(_guard(art.eval_comparison, _state(ctx), before=before, after=after, links=links))
-
-
-def _take_default_later(ctx, a: dict[str, Any]) -> None:
-    """If nobody decides within AUTO_SECONDS, take the default and tell the agent, so the work goes on."""
-    d = a.get("decision") or {}
-    if not d.get("auto_at") or ctx.loop is None:
-        return
-    state, sid, aid, version = _state(ctx), ctx.session_id, a["id"], a["version"]
-    since = time.time()
-
-    def fire() -> None:
-        runner = ctx.project.services.get("runner")
-        if runner is None or runner.stepped_in(sid, since):  # they interrupted or wrote: theirs to decide
-            return
-        try:
-            done = art.decide_by_default(state, aid, version)
-        except art.ArtifactError:
-            return
-        if done is not None:
-            runner.prompt(sid, f"{d['question']} {d['default']}. (Taken by default: nobody answered within "
-                               f"{art.AUTO_SECONDS} seconds; on {a['title']}, #/a/{aid}.) Go on with it; the person "
-                               "can still change course by writing.", synthetic=True)
-
-    ctx.loop.call_soon_threadsafe(ctx.loop.call_later, art.AUTO_SECONDS, fire)
+    return _out(_guard(art.eval_comparison, _state(ctx), before=before, after=after, links=links,
+                       session_id=ctx.session_id))
 
 
 def artifact_make(ctx, kind: str, title: str, blocks: list[dict[str, Any]], summary: str = "",
@@ -64,11 +40,9 @@ def artifact_make(ctx, kind: str, title: str, blocks: list[dict[str, Any]], summ
                   id: str | None = None) -> Any:
     if kind in art.BUILTIN:
         raise ToolError(f"{kind} is built from the project's own data: call the {kind} tool")
-    if decision and getattr(ctx.agent, "name", "") == "outside":  # no OpenTrain turn to hand a default to
-        decision = {k: v for k, v in decision.items() if k != "default"}
+    links = [x.split("#/a/")[-1] for x in links or []]  # the page's open link works as well as its id
     a = _guard(art.save, _state(ctx), kind=kind, title=title, blocks=blocks, summary=summary,
-               decision=decision, links=links, id=id)
-    _take_default_later(ctx, a)
+               decision=decision, links=links, id=id, session_id=ctx.session_id)
     return _out(a)
 
 
@@ -96,17 +70,18 @@ def tools() -> list[Tool]:
     return [
         T("data_card", "Make (or refresh) the data card: the artifact that shows what the model will learn from "
           "(imported traces: sources, repos, requests that ended well and are trained, what was left out and why, "
-          "tool mix, moments, one example) and asks the person whether to train on it. Make it after traces_import "
-          "and before data_build. It opens for the person with its question as buttons: reply in two lines at most "
-          "and ask nothing yourself.", S(), data_card),
+          "tool mix, moments, one example). It asks nothing: make it after traces_import, say the one fact that "
+          "matters in a line, and carry on to data_build.", S(), data_card),
         T("eval_comparison", "Make the eval comparison: the artifact that shows whether a version got better than "
           "`before` (default the untrained base) on the held-out tasks, task by task, regressions first, and asks "
           "ship / improve the data / roll back. Make it after eval_request for both; link the data card and the "
-          "recipe plan it came from.",
+          "recipe plan it came from. Its one question is whether to ship; choosing Ship it approves promoting "
+          "this version, so do not ask again.",
           S({"after": {"type": "string"}, "before": {"type": "string"}, "links": strs}, ["after"]), eval_comparison),
         T("artifact_make", "Make an artifact of any other kind, or a new version of one (pass its id): a page of "
-          "blocks that leads one step and asks the person one decision. Use it at each milestone: recipe_plan "
-          "(base model, method stages, settings, trainer, cost and time, which tests gate it; before spending), "
+          "blocks that leads one step. Use it at each milestone: recipe_plan (base model, method stages, "
+          "settings, trainer, cost and time, which tests gate it; before spending: the one page that asks to "
+          "spend, with approves), "
           "run_page (curves as steps and loss, cost so far), release (scores, limits, download and serving), "
           "cost_ledger, or a new kind when the work needs one. Load the artifact/design skill first: it says how a "
           "page reads well (summary, one callout, a few numbers, then evidence as charts, tables or side-by-sides). "
@@ -114,10 +89,12 @@ def tools() -> list[Tool]:
           S({"kind": {"type": "string", "description": "snake_case: recipe_plan, run_page, release, cost_ledger, ..."},
              "title": {"type": "string"}, "summary": {"type": "string"},
              "blocks": {"type": "array", "items": BLOCK},
-             "decision": {"type": "object", "description": "{question, options: [2-5 short labels], default?}. "
-                          "default (one of options, your recommendation) is taken after 30 s without an "
-                          "answer: give one only when the choice is free and easy to undo, never for spending, "
-                          "accounts, sending data out, deleting or what goes live."},
+             "decision": {"type": "object", "description": "Only for what the person must decide: spending, "
+                          "sending data out, what goes live. Leave it out otherwise and decide yourself. "
+                          "{question, options: [2-4 short labels, the go-ahead first], approves?: {needs: [spend, "
+                          "upload, job.start, ...], cost_usd}}. With approves, choosing the first option approves "
+                          "the whole plan: everything it needs up to about cost_usd runs without asking again, so "
+                          "do not propose those steps. A recipe_plan always has approves with the plan's total."},
              "links": strs, "id": {"type": "string", "description": "an existing artifact's id: save a new version"}},
             ["kind", "title", "blocks"]), artifact_make),
         T("artifacts", "The project's artifacts, newest first, with the decision each one asks and what the person "

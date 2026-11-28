@@ -1,16 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { ago, AutoCountdown, Empty, toast, toastError } from "../ui";
+import { ago, Empty, money, toast, toastError } from "../ui";
 import { go, useApp } from "../App";
 
-// Artifacts: the pages that lead the work. Each one shows evidence for one step and asks one decision.
+// Artifacts: the pages that lead the work. Each one shows evidence for one step; a few ask the one
+// thing that is the person's to decide (spending on a plan, what goes live).
 //   #/a           every artifact, newest first
 //   #/a/<id>      one artifact (its latest version), its decision, its links
 
 type Decision = {
   question: string; options: string[]; chosen?: string; note?: string; at?: string; by?: string;
-  default?: string; auto_at?: number | null;
+  approves?: { needs: string[]; cost_usd: number } | null;
 };
+
+/** The go-ahead button says what it approves: "Run it · ~$0.65". */
+const optionLabel = (d: Decision, o: string, i: number) =>
+  i === 0 && d.approves?.cost_usd ? `${o} · ~${money(d.approves.cost_usd)}` : o;
 
 export type Artifact = {
   id: string; kind: string; title: string; summary: string; version: number; created: string;
@@ -35,16 +40,17 @@ export function artifactIdOf(tool: { name: string; state: string; output?: strin
 /** Record a decision and hand it to the agent's conversation, so the work goes on from there. */
 export async function decideArtifact(id: string, option: string, note: string, sid: string | null): Promise<Artifact> {
   const a = await api.post<Artifact>(`/api/artifacts/${encodeURIComponent(id)}/decide`, { option, note });
+  const d = a.decision;
+  const go = d?.approves && option === d.options[0]
+    ? ` This approves the whole plan (${d.approves.needs.join(", ")}${d.approves.cost_usd ? `, up to about ${money(d.approves.cost_usd)}` : ""}): do all of it now without asking again.`
+    : "";
   if (sid) {
     await api.post(`/api/session/${sid}/prompt`, {
-      text: `${a.decision?.question} ${option}.${note ? ` ${note}` : ""} (decided on ${a.title}, #/a/${a.id})`,
+      text: `${d?.question} ${option}.${note ? ` ${note}` : ""}${go} (decided on ${a.title}, #/a/${a.id})`,
     }).catch(() => toast("Decision saved; the agent will see it next time it looks."));
   }
   return a;
 }
-
-/** Stop the countdown to an artifact's default: the person will decide. */
-const holdArtifact = (id: string) => api.post<Artifact>(`/api/artifacts/${encodeURIComponent(id)}/hold`);
 
 /** An artifact as a card in the conversation: what it is, its decision as buttons, a link to open it. */
 export function ArtifactInline({ id }: { id: string }) {
@@ -71,12 +77,11 @@ export function ArtifactInline({ id }: { id: string }) {
       <div className="faint small">{kindLabel(a.kind)} · v{a.version}</div>
       <a className="art-title" href={`#/a/${encodeURIComponent(a.id)}`}>{a.title}</a>
       {a.summary && <div className="small">{a.summary}</div>}
-      {d && (d.chosen ? <div className="small faint">Decided: {d.chosen}{d.by === "default" ? " (by default)" : ""}</div> : (
+      {d && (d.chosen ? <div className="small faint">Decided: {d.chosen}</div> : (
         <div className="row" style={{ flexWrap: "wrap", marginTop: 8 }}>
-          {d.default && <AutoCountdown at={d.auto_at} what={d.default} onHold={() => holdArtifact(a.id).then(setA).catch(toastError)} />}
           <span className="small">{d.question}</span>
           {d.options.map((o, i) => (
-            <button key={o} disabled={busy} className={`btn sm ${i === 0 ? "primary" : ""}`} onClick={() => pick(o)}>{o}</button>
+            <button key={o} disabled={busy} className={`btn sm ${i === 0 ? "primary" : ""}`} onClick={() => pick(o)}>{optionLabel(d, o, i)}</button>
           ))}
         </div>
       ))}
@@ -166,20 +171,15 @@ function ArtifactView({ id }: { id: string }) {
         <div className="card card-pad art-decision">
           <b>{a.decision.question}</b>
           {a.decision.chosen ? (
-            <p>Decided: <b>{a.decision.chosen}</b>{a.decision.by === "default" ? " (by default, nobody answered)" : ""}
+            <p>Decided: <b>{a.decision.chosen}</b>
               {a.decision.note ? ` (${a.decision.note})` : ""} <span className="faint">{ago(a.decision.at)}</span></p>
           ) : (
             <>
-              {a.decision.default && <AutoCountdown at={a.decision.auto_at} what={a.decision.default}
-                onHold={() => holdArtifact(a.id).then(setA).catch(toastError)} />}
               <input className="input" placeholder="a note for the agent (optional)" value={note}
-                onChange={(e) => {
-                  setNote(e.target.value);
-                  if (a.decision?.auto_at) holdArtifact(a.id).then(setA).catch(() => {});
-                }} style={{ margin: "10px 0" }} />
+                onChange={(e) => setNote(e.target.value)} style={{ margin: "10px 0" }} />
               <div className="row" style={{ flexWrap: "wrap" }}>
                 {a.decision.options.map((o, i) => (
-                  <button key={o} className={`btn ${i === 0 ? "primary" : ""}`} onClick={() => decide(o)}>{o}</button>
+                  <button key={o} className={`btn ${i === 0 ? "primary" : ""}`} onClick={() => decide(o)}>{optionLabel(a.decision!, o, i)}</button>
                 ))}
               </div>
             </>

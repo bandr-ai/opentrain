@@ -118,8 +118,7 @@ export type Permission = {
 export type Question = {
   id: string;
   session_id: string;
-  questions: { question: string; options: string[]; multiple?: boolean; default?: string }[];
-  auto_at?: number | null;
+  questions: { question: string; options: string[]; multiple?: boolean }[];
 };
 
 export type DatasetSummary = {
@@ -213,7 +212,6 @@ export type Proposal = {
   dataset?: string | null;
   status: string;
   agent?: string;
-  auto_at?: number | null;
 };
 
 export type StageKey = "goal" | "data" | "grade" | "baseline" | "train" | "prove" | "ship";

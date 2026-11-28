@@ -27,9 +27,8 @@ The goal is their routine work, cheaper; do not ask them to pick what to fix fro
 reports) or **a rule, not training** (commit trailers, spending without asking, a setting, the
 environment: say the one-line rule or setting that fixes it; OpenTrain's approvals already gate
 spending). `themes_set`, then `data_card`: the themes show there with their evidence.
-Ask nothing unless a trainable theme is seen in 5+ sessions you read as real; then one yes/no
-with your recommendation ("Also train against <theme>, seen in 8 sessions? I'd say yes").
-`themes_choose` records a yes.
+Ask nothing about them. A trainable theme seen in 5+ sessions you read as real goes in:
+`themes_choose` it and say so in a line ("Also training against <theme>, seen in 8 sessions").
 
 ## 3. Tasks, and what checks them (skills cl/mine, data/history)
 
@@ -46,20 +45,27 @@ the change with the real one, after the checks the work must not break (a build,
 
 ## 4. Pick the student (`students`)
 
-Offer only models `students` lists, by their exact ids; never a size or family it does not list.
+Pick only models `students` lists, by their exact ids; never a size or family it does not list.
 
-Offer the tiers in one `question`, cheapest first, with the reason for each:
+If they named a model, use it (one line if it is not on the list or you expect it to fall short, then
+the closest listed one). Otherwise pick yourself and say why in a line: the smallest one that is
+`ready_on` a trainer they have connected. Ask only when no trainer is connected, and then only what to
+connect. The tiers, cheapest first:
 - small: Inkling 2 Mini on Tinker (strongest coding per active parameter; Tinker key needed; a free
   tier at 64K context as `thinkingmachines/Inkling-2-Mini:peft:65536:free`, good for a first run),
   Qwen3.5-4B / 9B on Modal or RunPod (cheapest self-hosted; works with their GPU account today);
 - mid: Qwen3.8-27B (Tinker or one H200 on Modal), Qwen3.6-35B-A3B (3B active);
 - large: Inkling-Small on Tinker, when the small ones fall short.
-`trainer_set` with their choice. Offer what `students` shows as `ready_on`; for a trainer that is
-not connected, say what to connect (Settings, `opentrain login runpod`, or a Tinker key).
+`trainer_set` with the pick. For a trainer that is not connected, say what to connect (Settings,
+`opentrain login runpod`, or a Tinker key).
 
-## 5. Baselines (proof starts here)
+## 5. One plan, one go-ahead
 
-`eval_request` on the held-out tasks for: what they use today (the frontier baseline the gate
+Before anything is paid for, one `recipe_plan` page covers the whole run: the baselines below, the
+teacher passes, training and the re-score, with the total cost and time, and its `approves` (spend,
+upload, job.start; cost_usd the total). After "Run it", do steps 5 to 7 without asking again.
+
+Baselines (proof starts here): `eval_request` on the held-out tasks for: what they use today (the frontier baseline the gate
 measures; free on their Claude login) and `version="base"` (the untrained student). Report pass
 rate, median time and cost per task for each, and stop if the small base is already good enough.
 
@@ -68,7 +74,7 @@ rate, median time and cost per task for each, and stop if the small base is alre
 - `sample_run` (teacher frontier, n 2-4): the teacher's verified passes on training tasks.
 - `data_build` (traces auto, or themes): shortest verified teacher pass per task plus the imported
   trace examples (left out automatically: anything on or after the held-out cutoff).
-- `train_estimate`, then `propose` the SFT run with its cost; `job_start` once approved.
+- `train_estimate` (its cost goes in the plan's total); `job_start` once the plan is approved.
 
 ## 7. Prove, ship, repeat
 
