@@ -69,6 +69,7 @@ class Turn:
     recent: list[str] = field(default_factory=list)  # doom-loop hashes
     process: Any = None  # an agent provider's subprocess
     calls: set = field(default_factory=set)  # tool calls from an agent provider, still running
+    withdrawn: set = field(default_factory=set)  # those cancelled because the turn ended
 
 
 # outside agents get no system reminders: tell them to check instead of waiting for one
@@ -86,6 +87,7 @@ class Runner:
         self.loop = loop
         self.tasks: dict[str, asyncio.Task] = {}
         self.turns: dict[str, Turn] = {}
+        self.interrupted: dict[str, float] = {}  # session id -> when the person last interrupted it
         self.on_usage: list[Any] = []  # callables(session, message, usage, cost) -> None; may raise BudgetStop
         self._settle_crashed()
 
@@ -186,7 +188,16 @@ class Runner:
         self.store.publish("session.status", {"session_id": sid, "status": "busy" if self.busy(sid) else "idle"},
                            durable=False)
 
+    def stepped_in(self, sid: str, since: float) -> bool:
+        """Whether the person interrupted the session or wrote in it after ``since``: a default
+        decision waiting on them no longer applies."""
+        if self.interrupted.get(sid, 0) > since:
+            return True
+        return any(m["role"] == "user" and (m.get("time") or {}).get("created", 0) > since
+                   for m in self.project.messages(sid))
+
     async def interrupt(self, sid: str) -> bool:
+        self.interrupted[sid] = _now()
         t = self.tasks.get(sid)
         if not t or t.done():
             return False
@@ -311,6 +322,7 @@ class Runner:
         question still open in one of them is withdrawn rather than left for the person to answer into
         a turn that no longer exists."""
         for t in list(turn.calls):
+            turn.withdrawn.add(t)
             t.cancel()
 
     async def _step_loop(self, turn: Turn, provider: Any, agent: Any, ref: str) -> None:
@@ -492,9 +504,12 @@ class Runner:
         try:
             return await task
         except asyncio.CancelledError:
-            if task.cancelled():  # withdrawn because the turn ended
-                return ToolResult("the turn ended before this finished", metadata={"error": True})
-            raise
+            if task not in turn.withdrawn:  # our caller was cancelled: pass it on
+                raise
+            msg = "the turn ended before this finished"
+            # the task may have been cancelled before it ran, so its own cleanup never closed the part
+            self.store.update("part", part["id"], {"tool": {"state": "error", "error": msg, "time": {"end": _now()}}})
+            return ToolResult(msg, metadata={"error": True})
 
     async def outside_call(self, name: str, args: dict[str, Any]) -> ToolResult:
         """A tool call from an agent outside OpenTrain (``opentrain mcp``), recorded as one message in

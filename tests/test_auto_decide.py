@@ -173,3 +173,13 @@ def test_the_app_learns_when_it_runs_old_code(live, monkeypatch):
     assert c.get("/api/build")["restart"] is False
     monkeypatch.setattr(dashboard, "STARTED", dashboard.STARTED - 3600)  # the code changed after start
     assert c.get("/api/build")["restart"] is True
+
+
+def test_a_default_is_not_taken_on_a_newer_version(tmp_path):
+    blocks = [{"type": "text", "text": "x"}]
+    d = {"question": "Show more samples?", "options": ["no", "yes"], "default": "no"}
+    a = art.save(tmp_path, kind="sample_page", title="Samples", blocks=blocks, decision=d)
+    art.save(tmp_path, kind="sample_page", title="Samples v2", blocks=blocks, decision=d, id=a["id"])
+    with pytest.raises(art.ArtifactError):
+        art.decide(tmp_path, a["id"], "no", by="default", version=a["version"])
+    assert not art.get(tmp_path, a["id"])["decision"].get("chosen")

@@ -59,14 +59,15 @@ export function ArtifactInline({ id }: { id: string }) {
   const { sid } = useApp();
   const [a, setA] = useState<Artifact | null>(null);
   const [busy, setBusy] = useState(false);
+  const loaded = a !== null;
   const open = !!a?.decision && !a.decision.chosen;
   useEffect(() => {
     const load = () => api.get<Artifact>(`/api/artifacts/${encodeURIComponent(id)}`).then(setA).catch(() => {});
-    load();
-    if (a && !open) return;  // decided: nothing more will change
+    if (!loaded) load();
+    if (loaded && !open) return;  // nothing to decide, or decided: nothing more will change
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
-  }, [id, open]);
+  }, [id, loaded, open]);
   if (!a) return null;
   const d = a.decision;
   const pick = async (o: string) => {

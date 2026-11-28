@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from ... import artifacts as art
@@ -40,14 +41,17 @@ def _take_default_later(ctx, a: dict[str, Any]) -> None:
     if not d.get("auto_at") or ctx.loop is None:
         return
     state, sid, aid, version = _state(ctx), ctx.session_id, a["id"], a["version"]
+    since = time.time()
 
     def fire() -> None:
+        runner = ctx.project.services.get("runner")
+        if runner is None or runner.stepped_in(sid, since):  # they interrupted or wrote: theirs to decide
+            return
         try:
             done = art.decide_by_default(state, aid, version)
         except art.ArtifactError:
             return
-        runner = ctx.project.services.get("runner")
-        if done is not None and runner is not None:
+        if done is not None:
             runner.prompt(sid, f"{d['question']} {d['default']}. (Taken by default: nobody answered within "
                                f"{art.AUTO_SECONDS} seconds; on {a['title']}, #/a/{aid}.) Go on with it; the person "
                                "can still change course by writing.", synthetic=True)

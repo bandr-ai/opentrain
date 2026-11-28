@@ -558,7 +558,8 @@ function QuestionAsk({ q, onDone }: { q: Question; onDone: () => void }) {
   const hold = () => {
     if (!q.auto_at || held.current) return;
     held.current = true;
-    api.post(`/api/session/${q.session_id}/question/${q.id}/reply`, { hold: true }).then(onDone).catch(() => {});
+    api.post(`/api/session/${q.session_id}/question/${q.id}/reply`, { hold: true }).then(onDone)
+      .catch(() => { held.current = false; });  // try again on the next touch
   };
   const defaults = q.questions.map((x) => x.default).filter(Boolean).join(", ");
   return (
