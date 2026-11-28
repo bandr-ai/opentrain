@@ -25,6 +25,7 @@ from __future__ import annotations
 import html
 import json
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,9 @@ def _root(state: Path) -> Path:
     return state / "artifacts"
 
 
+AUTO_SECONDS = 30  # a decision with a default takes it when nobody answers in time
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -76,7 +80,12 @@ def _decision(d: Any) -> dict[str, Any] | None:
     if not isinstance(d, dict) or not d.get("question") or not isinstance(d.get("options"), list) \
             or not 2 <= len(d["options"]) <= 5 or not all(isinstance(o, str) and o for o in d["options"]):
         raise ArtifactError("decision needs a question and 2-5 option labels")
-    return {"question": str(d["question"]), "options": list(d["options"])}
+    out = {"question": str(d["question"]), "options": list(d["options"])}
+    if d.get("default") is not None:
+        if d["default"] not in out["options"]:
+            raise ArtifactError(f"default {d['default']!r} is not one of the options")
+        out.update(default=d["default"], auto_at=time.time() + AUTO_SECONDS)
+    return out
 
 
 def save(state: Path, *, kind: str, title: str, blocks: list[dict[str, Any]], summary: str = "",
@@ -163,9 +172,30 @@ def decide(state: Path, aid: str, option: str, note: str = "", by: str = "person
         raise ArtifactError(f"{aid} asks for no decision")
     if option not in d["options"]:
         raise ArtifactError(f"choose one of: {', '.join(d['options'])}")
-    d.update(chosen=option, note=str(note)[:2000], by=by, at=_now())
+    d.update(chosen=option, note=str(note)[:2000], by=by, at=_now(), auto_at=None)
     write_json(vs[-1], art)
     return art
+
+
+def hold(state: Path, aid: str) -> dict[str, Any]:
+    """The person is looking at it: stop the countdown to the default and wait for them."""
+    vs = _versions(state, aid)
+    if not vs:
+        raise ArtifactError(f"no artifact {aid!r}")
+    art = json.loads(vs[-1].read_text())
+    if (art.get("decision") or {}).get("auto_at"):
+        art["decision"]["auto_at"] = None
+        write_json(vs[-1], art)
+    return art
+
+
+def decide_by_default(state: Path, aid: str, version: int) -> dict[str, Any] | None:
+    """Take the default if this version's decision is still open and nobody stopped the countdown."""
+    a = latest(state, aid)
+    d = (a or {}).get("decision") or {}
+    if not a or a["version"] != version or d.get("chosen") or not d.get("auto_at") or not d.get("default"):
+        return None
+    return decide(state, aid, d["default"], by="default")
 
 
 # ---------------------------------------------------------------------------- built-in artifacts

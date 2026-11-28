@@ -18,10 +18,12 @@ import fnmatch
 import time
 from typing import Any
 
+from .questions import AUTO_SECONDS, _after_wait
 from .tool import ToolContext, ToolError
 
 GRANTABLE = ("spend", "upload", "job.start", "promote", "serve", "webfetch", "download")
-REPLIES = ("approve", "change", "skip")
+REPLIES = ("approve", "change", "skip", "hold")
+AUTO = "approved automatically"
 GRANT_SECONDS = 2 * 3600
 SPEND_SLACK = 1.5  # a granted step may spend up to 1.5x its estimate (+5 cents) before asking again
 
@@ -47,11 +49,17 @@ class Proposals:
             "cost_usd": float(step.get("cost_usd") or 0.0), "minutes": step.get("minutes"),
             "needs": needs, "stage": step.get("stage"), "dataset": step.get("dataset"),
             "status": "pending", "time": {"created": time.time()}})
-        fut = asyncio.get_running_loop().create_future()
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
         self.waiting[p["id"]] = fut
+        timer = None
         auto = self._unattended(ctx.session_id, needs)
         if auto is not None:  # nobody is there to click: decide now instead of waiting forever
             self._settle(p["id"], *auto)
+        elif self.harmless(p):
+            # Free and gated by nothing: it goes ahead unless the person stops it within AUTO_SECONDS.
+            self.store.update("proposal", p["id"], {"auto_at": time.time() + AUTO_SECONDS})
+            timer = loop.call_later(AUTO_SECONDS, self._auto, p["id"])
         self.store.publish("session.status", {"session_id": ctx.session_id, "status": "waiting",
                                               "proposal_id": p["id"]}, durable=False)
         try:
@@ -60,12 +68,25 @@ class Proposals:
             self.store.update("proposal", p["id"], {"status": "cancelled"})
             raise
         finally:
+            if timer:
+                timer.cancel()
             self.waiting.pop(p["id"], None)
-            self.store.publish("session.status", {"session_id": ctx.session_id, "status": "busy"}, durable=False)
+            _after_wait(self.project, ctx.session_id)
         if reply == "approve":
             self.grants[ctx.session_id] = {"proposal_id": p["id"], "needs": needs, "cap_usd": p["cost_usd"],
                                            "spent_usd": 0.0, "until": time.time() + GRANT_SECONDS}
         return reply, message
+
+    @staticmethod
+    def harmless(p: dict[str, Any]) -> bool:
+        """A step that may go ahead by itself: it costs nothing and needs no gated action (no spend,
+        upload, training, serving, promotion, fetch or download). Everything else waits for the person."""
+        return not p.get("needs") and not float(p.get("cost_usd") or 0)
+
+    def _auto(self, pid: str) -> None:
+        p = self.store.get("proposal", pid)
+        if p and p.get("status") == "pending" and p.get("auto_at") and pid in self.waiting and self.harmless(p):
+            self._settle(pid, "approved", AUTO, "approve")
 
     def _unattended(self, sid: str, needs: list[str]) -> tuple[str, str, str] | None:
         """``opentrain run --yes`` (auto_approve) approves; an unattended run without it skips."""
@@ -84,6 +105,9 @@ class Proposals:
         p = self.store.get("proposal", pid)
         if p is None or p.get("status") != "pending" or pid not in self.waiting:
             raise KeyError(f"no pending proposal {pid}")
+        if reply == "hold":  # the person is looking at it: stop the countdown
+            self.store.update("proposal", pid, {"auto_at": None})
+            return self.store.get("proposal", pid)
         if reply == "change" and not (message or "").strip():
             raise ValueError("say what to change")
         return self._settle(pid, {"approve": "approved", "change": "changed", "skip": "skipped"}[reply], message,
@@ -137,7 +161,9 @@ async def propose_tool(ctx: ToolContext, title: str, why: str = "", cost_usd: fl
                                             "needs": needs or [], "stage": stage, "dataset": dataset})
     if reply == "approve":
         covered = ", ".join(needs or []) or "nothing gated"
-        return (f"Approved: {title}. Do it now. This step's approval covers {covered}"
+        how = (f" (nobody answered within {AUTO_SECONDS} seconds and the step is free, so it went ahead)"
+               if message == AUTO else "")
+        return (f"Approved{how}: {title}. Do it now. This step's approval covers {covered}"
                 + (f" up to about ${cost_usd:.2f}" if cost_usd else "") + "; anything beyond that still asks. "
                 "When it is done, report the result in a few lines and propose the next step.")
     if reply == "message":

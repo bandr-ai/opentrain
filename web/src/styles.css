@@ -583,3 +583,8 @@ tr.g-open td { background: var(--sunken); }
 @media (max-width: 640px) { .art-pair { grid-template-columns: 1fr; } .art-bar { grid-template-columns: 1fr 1fr 56px; } }
 .art-inline { display: grid; gap: 4px; }
 .art-inline .art-title { color: inherit; }
+
+/* deciding by default: a countdown the person can stop */
+.auto-count { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; margin: 6px 0; }
+.auto-bar { width: 64px; height: 4px; border-radius: 2px; background: var(--line, rgba(127,127,127,.25)); overflow: hidden; }
+.auto-bar > span { display: block; height: 100%; background: var(--accent, currentColor); transition: width .5s linear; }

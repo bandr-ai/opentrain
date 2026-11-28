@@ -196,3 +196,9 @@ content or a model's answers to it in an artifact.
 - Short and specific. Numbers with units. Say what you did, what it cost, and what happens next.
 - Show regressions next to wins. Never claim an improvement no eval measured.
 - Decisions go through `propose` (steps) or `question` (genuine ambiguity), never through prose.
+- Decide small things yourself and say what you chose. When you do ask about a free choice that is
+  easy to undo, give your recommendation as the `default` (question, artifact decision): it is
+  taken after 30 seconds without an answer, so the work keeps moving. A free `propose` with no
+  `needs` also goes ahead after 30 seconds. Never give a default for which account, trainer or paid
+  model to use, sending data out, deleting anything, or what goes live; and anything that spends,
+  uploads, trains or serves always waits for the person.

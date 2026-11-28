@@ -397,6 +397,13 @@ async def decide_artifact(request: web.Request):
                          str(b.get("option") or ""), str(b.get("note") or "")))
 
 
+@routes.post("/api/artifacts/{id}/hold")
+async def hold_artifact(request: web.Request):
+    from .. import artifacts
+
+    return ok(await _run(artifacts.hold, project_of(request).state, request.match_info["id"]))
+
+
 @routes.post("/api/artifacts/data-card")
 async def make_data_card(request: web.Request):
     from .. import artifacts

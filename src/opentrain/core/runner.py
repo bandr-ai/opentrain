@@ -68,6 +68,7 @@ class Turn:
     reasoning: str = ""
     recent: list[str] = field(default_factory=list)  # doom-loop hashes
     process: Any = None  # an agent provider's subprocess
+    calls: set = field(default_factory=set)  # tool calls from an agent provider, still running
 
 
 # outside agents get no system reminders: tell them to check instead of waiting for one
@@ -179,6 +180,11 @@ class Runner:
     def busy(self, sid: str) -> bool:
         t = self.tasks.get(sid)
         return bool(t and not t.done())
+
+    def status_after_wait(self, sid: str) -> None:
+        """A proposal, question or permission was settled: say whether a turn is still running."""
+        self.store.publish("session.status", {"session_id": sid, "status": "busy" if self.busy(sid) else "idle"},
+                           durable=False)
 
     async def interrupt(self, sid: str) -> bool:
         t = self.tasks.get(sid)
@@ -292,9 +298,20 @@ class Runner:
         turn = Turn(sid)
         self.turns[sid] = turn
         if getattr(provider, "kind", "step") == "agent":
-            await provider.run_turn(self, turn, agent, ref)
+            try:
+                await provider.run_turn(self, turn, agent, ref)
+            finally:
+                self._end_calls(turn)
             return
         await self._step_loop(turn, provider, agent, ref)
+
+    @staticmethod
+    def _end_calls(turn: Turn) -> None:
+        """The provider's turn is over, so nothing is waiting for these calls any more. A proposal or
+        question still open in one of them is withdrawn rather than left for the person to answer into
+        a turn that no longer exists."""
+        for t in list(turn.calls):
+            t.cancel()
 
     async def _step_loop(self, turn: Turn, provider: Any, agent: Any, ref: str) -> None:
         sid = turn.session_id
@@ -469,8 +486,15 @@ class Runner:
             raise ToolError("no turn is running in this session")
         agent = self.project.services["agents"].get(self.project.session(sid).get("agent"))
         part = self._tool_part(turn, name, args, call_id)
-        result = await self._execute(turn, agent, name, args, call_id, part)
-        return result
+        task = asyncio.get_running_loop().create_task(self._execute(turn, agent, name, args, call_id, part))
+        turn.calls.add(task)
+        task.add_done_callback(turn.calls.discard)
+        try:
+            return await task
+        except asyncio.CancelledError:
+            if task.cancelled():  # withdrawn because the turn ended
+                return ToolResult("the turn ended before this finished", metadata={"error": True})
+            raise
 
     async def outside_call(self, name: str, args: dict[str, Any]) -> ToolResult:
         """A tool call from an agent outside OpenTrain (``opentrain mcp``), recorded as one message in
