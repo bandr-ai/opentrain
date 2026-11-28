@@ -164,3 +164,12 @@ def test_artifact_default_and_hold(tmp_path):
     with pytest.raises(art.ArtifactError):
         art.save(tmp_path, kind="sample_page", title="x", blocks=blocks,
                  decision={"question": "q", "options": ["a", "b"], "default": "c"})
+
+
+def test_the_app_learns_when_it_runs_old_code(live, monkeypatch):
+    from opentrain.server import dashboard
+
+    c = live.client(live.proj)
+    assert c.get("/api/build")["restart"] is False
+    monkeypatch.setattr(dashboard, "STARTED", dashboard.STARTED - 3600)  # the code changed after start
+    assert c.get("/api/build")["restart"] is True

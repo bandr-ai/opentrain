@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 from aiohttp import web
@@ -33,6 +34,22 @@ SECURITY = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Ref
 
 routes = web.RouteTableDef()
 
+PACKAGE = Path(__file__).resolve().parent.parent
+
+
+def _code_stamp() -> float:
+    """When OpenTrain's code on disk last changed (an upgrade, or a checkout under an editable install)."""
+    return max((p.stat().st_mtime for p in PACKAGE.rglob("*.py")), default=0.0)
+
+
+def _page_script() -> str | None:
+    built = APP / "index.html"
+    m = re.search(r"/assets/(index-[\w-]+\.js)", built.read_text()) if built.exists() else None
+    return m.group(1) if m else None
+
+
+STARTED = _code_stamp()  # what this server process is running
+
 
 def _state(request: web.Request) -> Path:
     return project_of(request).state
@@ -46,6 +63,14 @@ async def index(request: web.Request):
     if request.query.get("directory"):
         resp.set_cookie(DIR_COOKIE, request.query["directory"], max_age=30 * 24 * 3600, httponly=True, samesite="Strict")
     return resp
+
+
+@routes.get("/api/build")
+async def build(request: web.Request):
+    """Whether this server runs older code than is on disk (restart it), and which page script is
+    current (a tab running another one should reload)."""
+    stamp, script = await asyncio.to_thread(lambda: (_code_stamp(), _page_script()))
+    return ok({"restart": stamp > STARTED + 1, "script": script})
 
 
 @routes.get("/assets/{name}")

@@ -588,3 +588,7 @@ tr.g-open td { background: var(--sunken); }
 .auto-count { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; margin: 6px 0; }
 .auto-bar { width: 64px; height: 4px; border-radius: 2px; background: var(--line, rgba(127,127,127,.25)); overflow: hidden; }
 .auto-bar > span { display: block; height: 100%; background: var(--accent, currentColor); transition: width .5s linear; }
+
+/* the running server or this tab is older than what is installed */
+.stale-bar { padding: 8px 16px; background: color-mix(in srgb, var(--warn) 14%, transparent); border-bottom: 1px solid var(--line); }
+.stale-bar code { font-size: 12px; }
