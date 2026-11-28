@@ -1,19 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { ago, AutoCountdown, Empty, Markdown, toast, toastError } from "../ui";
+import { ago, AutoCountdown, Empty, toast, toastError } from "../ui";
 import { go, useApp } from "../App";
 
 // Artifacts: the pages that lead the work. Each one shows evidence for one step and asks one decision.
 //   #/a           every artifact, newest first
 //   #/a/<id>      one artifact (its latest version), its decision, its links
-
-type Block =
-  | { type: "text"; text: string }
-  | { type: "stats"; items: { label: string; value: string | number; note?: string }[] }
-  | { type: "bars"; title?: string; items: { label: string; value: number; max?: number; note?: string }[] }
-  | { type: "table"; title?: string; columns: string[]; rows: (string | number)[][] }
-  | { type: "samples"; title?: string; items: { title?: string; left_label: string; left: string; right_label: string; right: string }[] }
-  | { type: "list"; title?: string; items: string[] };
 
 type Decision = {
   question: string; options: string[]; chosen?: string; note?: string; at?: string; by?: string;
@@ -22,7 +14,7 @@ type Decision = {
 
 export type Artifact = {
   id: string; kind: string; title: string; summary: string; version: number; created: string;
-  source: string; links: string[]; decision: Decision | null; blocks?: Block[];
+  source: string; links: string[]; decision: Decision | null; blocks?: unknown[];
 };
 
 const KIND: Record<string, string> = {
@@ -163,12 +155,9 @@ function ArtifactView({ id }: { id: string }) {
   return (
     <article className="artifact">
       <div className="faint small">
-        <a href="#/a">artifacts</a> · {kindLabel(a.kind)} · v{a.version} · {ago(a.created)}
-        {a.source === "agent" ? " · made by the agent" : ""}
+        <a href="#/a">artifacts</a>{a.source === "agent" ? " · made by the agent" : ""}
       </div>
-      <h1 className="art-h1">{a.title}</h1>
-      {a.summary && <p className="faint">{a.summary}</p>}
-      {(a.blocks || []).map((b, i) => <BlockView key={i} b={b} />)}
+      <ArtifactFrame id={a.id} version={a.version} />
       {a.links.length > 0 && (
         <p className="small faint">Built on: {a.links.map((l, i) => (
           <span key={l}>{i ? ", " : ""}<a href={`#/a/${encodeURIComponent(l)}`}>{l}</a></span>))}</p>
@@ -204,38 +193,29 @@ function ArtifactView({ id }: { id: string }) {
   );
 }
 
-function BlockView({ b }: { b: Block }) {
-  const head = "title" in b && b.title ? <h3 className="art-h3">{b.title}</h3> : null;
-  switch (b.type) {
-    case "text":
-      return <div className="art-text"><Markdown text={b.text} /></div>;
-    case "stats":
-      return <div className="art-stats">{b.items.map((s, i) => (
-        <div key={i} className="card art-stat"><span className="faint small">{s.label}</span><b>{s.value}</b>
-          {s.note && <span className="faint small">{s.note}</span>}</div>))}</div>;
-    case "bars": {
-      const top = Math.max(1, ...b.items.map((x) => Number(x.value) || 0));
-      return <div>{head}{b.items.map((x, i) => {
-        const max = Number(x.max) || top;
-        return <div key={i} className="art-bar"><span>{x.label}</span>
-          <div className="art-track"><div className="art-fill" style={{ width: `${Math.min(100, ((Number(x.value) || 0) / max) * 100)}%` }} /></div>
-          <span className="faint small">{x.value}{x.note || ""}</span></div>;
-      })}</div>;
-    }
-    case "table":
-      return <div className="art-table">{head}<table><thead><tr>{b.columns.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
-        <tbody>{b.rows.map((r, i) => <tr key={i}>{r.map((c, j) => (
-          <td key={j} className={c === "pass" ? "good" : c === "fail" ? "bad" : ""}>{c}</td>))}</tr>)}</tbody></table></div>;
-    case "samples":
-      return <div>{head}{b.items.map((s, i) => (
-        <div key={i}>{s.title && <h3 className="art-h3">{s.title}</h3>}
-          <div className="art-pair">
-            <div><span className="faint small">{s.left_label}</span><pre>{s.left}</pre></div>
-            <div><span className="faint small">{s.right_label}</span><pre>{s.right}</pre></div>
-          </div></div>))}</div>;
-    case "list":
-      return <div>{head}<ul>{b.items.map((x, i) => <li key={i}><Markdown text={String(x)} /></li>)}</ul></div>;
-    default:
-      return null;
-  }
+/** The artifact's page as the server draws it (the same page that is shared), in a frame that can run
+ *  nothing and load nothing from outside, sized to its content. */
+function ArtifactFrame({ id, version }: { id: string; version: number }) {
+  const ref = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(600);
+  useEffect(() => {
+    const f = ref.current;
+    if (!f) return;
+    let ro: ResizeObserver | null = null;
+    const fit = () => {
+      const doc = f.contentDocument;
+      if (!doc?.documentElement) return;
+      setHeight(Math.max(200, doc.documentElement.scrollHeight));
+      ro?.disconnect();
+      ro = new ResizeObserver(() => setHeight(Math.max(200, doc.documentElement.scrollHeight)));
+      ro.observe(doc.body);
+    };
+    f.addEventListener("load", fit);
+    return () => { f.removeEventListener("load", fit); ro?.disconnect(); };
+  }, [id, version]);
+  return (
+    <iframe ref={ref} key={`${id}@${version}`} className="art-frame" title={id} style={{ height }}
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      src={`/api/artifacts/${encodeURIComponent(id)}/html?embed=1&version=${version}`} />
+  );
 }

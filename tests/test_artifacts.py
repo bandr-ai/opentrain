@@ -27,7 +27,7 @@ def test_any_new_kind_works_and_bad_input_says_why(tmp_path):
     a = A.save(tmp_path, kind="data_fix", title="Drop the AWS sessions?",
                blocks=[{"type": "list", "items": ["12 sessions"]}])
     assert a["kind"] == "data_fix"
-    for blocks, msg in (([], "non-empty"), ([{"type": "chart"}], "type must be"), ([{"type": "table"}], "needs")):
+    for blocks, msg in (([], "non-empty"), ([{"type": "pie"}], "type must be"), ([{"type": "table"}], "needs")):
         with pytest.raises(A.ArtifactError, match=msg):
             A.save(tmp_path, kind="x", title="t", blocks=blocks)
     with pytest.raises(A.ArtifactError, match="no artifact"):
